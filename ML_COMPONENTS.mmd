@@ -106,10 +106,26 @@ graph LR
     online_adapt -.->|Updated<br/>dynamics| world_model
     risk_esc -.->|Risk<br/>signals| risk_system
     
+    %% ============================================================================
+    %% LEGEND: Color Coding Strategy
+    %% Explains the semantic meaning of each color category
+    %% ============================================================================
+    subgraph LEGEND["📖 LEGEND: Color Coding Strategy"]
+        legend_learned["🔴 LEARNED (ML)<br/>Adaptive neural networks<br/>Embeddings, trained policies"]
+        legend_engineered["⚪ ENGINEERED/DETERMINISTIC<br/>Safety filters, formal<br/>verification, classical control"]
+        legend_deliberative["🟢 DELIBERATIVE REASONING<br/>Slow planning, goal<br/>composition, high-level logic"]
+        legend_perception["🔵 PERCEPTION & GEOMETRY<br/>Vision encoders, geometry<br/>extraction, SE(3) layers"]
+        legend_fusion["🟣 FUSION/INTEGRATION<br/>Scene state, embeddings<br/>multi-modal combination"]
+        legend_sensors["🟡 SENSORS & STATE<br/>Raw inputs, persistent<br/>scene graph, monitoring"]
+        
+        legend_learned ~~~ legend_engineered ~~~ legend_deliberative ~~~ legend_perception ~~~ legend_fusion ~~~ legend_sensors
+    end
+    
     %% Styling - Subgraph backgrounds (light fills)
     style PERCEPTION_DETAIL fill:#e0f2f1,stroke:#004d40,stroke-width:2px,stroke-dasharray: 5 5
     style POLICY_DETAIL fill:#fce4ec,stroke:#880e4f,stroke-width:2px,stroke-dasharray: 5 5
     style FEEDBACK fill:#fff3e0,stroke:#e65100,stroke-width:2px,stroke-dasharray: 5 5
+    style LEGEND fill:#f5f5f5,stroke:#424242,stroke-width:2px
     
     %% Styling - Subgraph internal components (inherit color themes)
     style action_geom fill:#b2dfdb,stroke:#00695c,stroke-width:2px
@@ -148,3 +164,11 @@ graph LR
     %% Styling - Red (Engineered/Deterministic)
     style fast_controller fill:#ffcdd2,stroke:#c62828,stroke-width:2px
     style safety_filter fill:#ffcdd2,stroke:#c62828,stroke-width:2px
+    
+    %% Styling - Legend Components
+    style legend_learned fill:#f8bbd0,stroke:#c2185b,stroke-width:2px
+    style legend_engineered fill:#ffcdd2,stroke:#c62828,stroke-width:2px
+    style legend_deliberative fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style legend_perception fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    style legend_fusion fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px
+    style legend_sensors fill:#fff9c4,stroke:#f57f17,stroke-width:2px
