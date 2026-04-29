@@ -44,7 +44,7 @@ graph LR
     scene_graph -->|State representation| slow_planner
     scene_graph -->|Dynamics input| world_model
     
-    world_model -->|Predictions| slow_planner
+    world_model -.->|Predictions| slow_planner
     slow_planner -->|Affordance<br/>reasoning| policy_substrate
     
     policy_substrate -->|Behavior<br/>commands| fast_controller
