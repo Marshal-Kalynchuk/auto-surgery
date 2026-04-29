@@ -28,7 +28,7 @@ graph LR
     safety_filter["🛡️ SAFETY FILTER<br/>Control Barrier Functions<br/>100-500 Hz"]
     
     %% Robot Output (Yellow)
-    robot_output["🤖 ROBOT COMMANDS<br/>Target trajectory<br/>Force/velocity profile<br/>Gripper commands"]
+    robot_output["🤖 ROBOT COMMANDS<br/>Target trajectory<br/>Force/velocity profile<br/>Gripper commands<br/>100-500 Hz"]
     
     %% Risk System (Parallel - Orange monitoring)
     risk_system["⚠️ RISK MONITOR<br/>Conformal prediction<br/>Uncertainty aggregation<br/>Asynchronous"]
@@ -58,6 +58,70 @@ graph LR
     %% Risk System Monitoring (Dashed)
     scene_graph -.->|State input| risk_system
     risk_system -.->|Risk<br/>escalation| safety_filter
+    
+    %% ============================================================================
+    %% DETAILED SUBGRAPH 1: PERCEPTION_DETAIL
+    %% Expands the dual-stream perception approach with specific ML techniques
+    %% ============================================================================
+    subgraph PERCEPTION_DETAIL["📊 PERCEPTION: ML TECHNIQUES"]
+        action_geom["⚡ ACTION STREAM<br/>SE(3)-Equivariant Layers<br/>Fast geometry extraction<br/>Contrastive learning<br/>~100+ Hz"]
+        semantic_seg["🎨 SEMANTIC STREAM<br/>SAM 2 / Foundation Models<br/>Surgical fine-tuning<br/>Rich semantic labels<br/>~5-10 Hz"]
+        fusion_slot["🔗 FUSION MECHANISM<br/>Slot attention<br/>Variable-cardinality tracking<br/>Persistent object identity<br/>~10-20 Hz"]
+        
+        action_geom -->|Joint<br/>embeddings| fusion_slot
+        semantic_seg -->|Semantic<br/>attributes| fusion_slot
+    end
+    
+    %% Connect subgraph outputs back to main flow
+    fusion_slot -.->|Detailed<br/>perception| scene_graph
+    
+    %% ============================================================================
+    %% DETAILED SUBGRAPH 2: POLICY_DETAIL
+    %% Expands the policy execution with monitoring, modulation, and control hand-off
+    %% ============================================================================
+    subgraph POLICY_DETAIL["🎯 POLICY EXECUTION: ML TECHNIQUES"]
+        comp_substrate["🧬 COMPOSITIONAL SUBSTRATE<br/>Hybrid SSM-Transformer<br/>Language-conditioned<br/>Behavior contracts<br/>5-20 Hz"]
+        monitor_mod["📊 MONITORING & MODULATION<br/>Confidence scoring<br/>OOD detection<br/>Risk-aware modulation<br/>~20 Hz"]
+        control_handoff["📤 CONTROL HAND-OFF<br/>Short-horizon targets<br/>Multi-modal supervision<br/>Trajectory refinement<br/>100-500 Hz"]
+        
+        comp_substrate -->|Behavior<br/>output| monitor_mod
+        monitor_mod -->|Modulated<br/>commands| control_handoff
+    end
+    
+    %% Connect subgraph outputs back to main flow
+    control_handoff -.->|Policy<br/>commands| fast_controller
+    
+    %% ============================================================================
+    %% DETAILED SUBGRAPH 3: FEEDBACK
+    %% Expands online adaptation and risk escalation mechanisms
+    %% ============================================================================
+    subgraph FEEDBACK["🔄 FEEDBACK & ADAPTATION: ML TECHNIQUES"]
+        online_adapt["🔄 ONLINE ADAPTATION<br/>Per-slot dynamics adapters<br/>Contact-aware residuals<br/>In-deployment learning<br/>~20 Hz"]
+        risk_esc["⚠️ RISK ESCALATION<br/>Confidence thresholds<br/>Safety trigger conditions<br/>Graceful fallback<br/>Asynchronous"]
+        
+        online_adapt -->|Adapted<br/>model| risk_esc
+    end
+    
+    %% Connect subgraph outputs back to main flow
+    online_adapt -.->|Updated<br/>dynamics| world_model
+    risk_esc -.->|Risk<br/>signals| risk_system
+    
+    %% Styling - Subgraph backgrounds (light fills)
+    style PERCEPTION_DETAIL fill:#e0f2f1,stroke:#004d40,stroke-width:2px,stroke-dasharray: 5 5
+    style POLICY_DETAIL fill:#fce4ec,stroke:#880e4f,stroke-width:2px,stroke-dasharray: 5 5
+    style FEEDBACK fill:#fff3e0,stroke:#e65100,stroke-width:2px,stroke-dasharray: 5 5
+    
+    %% Styling - Subgraph internal components (inherit color themes)
+    style action_geom fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    style semantic_seg fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    style fusion_slot fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px
+    
+    style comp_substrate fill:#f8bbd0,stroke:#c2185b,stroke-width:2px
+    style monitor_mod fill:#ffcc80,stroke:#e65100,stroke-width:2px
+    style control_handoff fill:#ffcdd2,stroke:#c62828,stroke-width:2px
+    
+    style online_adapt fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style risk_esc fill:#ffcc80,stroke:#e65100,stroke-width:2px
     
     %% Styling - Yellow
     style sensors fill:#fff9c4,stroke:#f57f17,stroke-width:2px
