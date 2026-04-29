@@ -1,6 +1,31 @@
+%% ML_COMPONENTS.mmd - ML Architecture Data Flow Visualization
+%% Shows how learned and engineered components interact at runtime.
+%% 
+%% Key concepts:
+%% - Left-to-right data flow from sensors to robot commands
+%% - Operating frequencies shown for each component (Hz or asynchronous)
+%% - ML techniques explicitly labeled on each stage
+%% - Separation of soft (learned) vs hard (engineered) guarantees
+%% 
+%% Related Documentation:
+%% - ARCHITECTURE_CONDENSED.md: §3 (System Overview), §4 (Design Decisions)
+%% - ARCHITECTURE.md: §3 (System Loops and Hierarchy)
+%% - DIAGRAMS_README.md: Overview of all architecture diagrams
+
 graph LR
+    %% MAIN EXECUTION SPINE
+    %% Core data pathway at runtime: Sensors → Perception → Scene State → 
+    %% Planning → Policy → Control → Safety → Robot
+    %% See ARCHITECTURE_CONDENSED.md §3 for loop descriptions
+    
     %% Sensor Inputs (Yellow)
     sensors["🎥 SENSOR INPUTS<br/>Vision: 60-120 Hz<br/>Kinematics: 500 Hz<br/>Force: 1 kHz<br/>Audio: 48 kHz"]
+    
+    %% PERCEPTION LAYER - Dual-Stream Architecture
+    %% Action stream (SE(3)-equivariant): ~100+ Hz for fast control geometry
+    %% Semantic stream (SAM 2): ~5-10 Hz for rich semantic understanding
+    %% Merged via slot attention (10-20 Hz) into joint embeddings
+    %% See ARCHITECTURE_CONDENSED.md §4.4-4.5 for design rationale
     
     %% Perception - Dual Streams (Teal)
     action_stream["⚡ ACTION STREAM<br/>SE(3)-Equivariant Encoders<br/>~100+ Hz"]
@@ -40,13 +65,28 @@ graph LR
     action_stream -->|Joint slot<br/>embeddings| slot_attention
     semantic_stream -->|Semantic<br/>attributes| slot_attention
     
+    %% SCENE GRAPH - Object-Centric Embedding-First Representation
+    %% Per-slot embeddings primary; type labels derived not authoritative
+    %% Persistent identity enables stable surgeon tags and safety anchors
+    %% See ARCHITECTURE_CONDENSED.md §4.1 for rationale on embedding-first design
+
     slot_attention -->|Scene state| scene_graph
     scene_graph -->|State representation| slow_planner
     scene_graph -->|Dynamics input| world_model
     
+    %% REASONING & POLICY EXECUTION
+    %% World model predicts future states with embedding-conditioned dynamics
+    %% Slow planner (0.5-2 Hz) deliberates; Policy substrate (5-20 Hz) generates behavior
+    %% See ARCHITECTURE_CONDENSED.md §4.6-4.8 for compositional substrate and world model
+
     world_model -.->|Predictions| slow_planner
     slow_planner -->|Affordance<br/>reasoning| policy_substrate
     
+    %% EXECUTION & SAFETY
+    %% Fast controller (100-500 Hz) tracks substrate's target trajectories via MPC/servoing
+    %% Safety filter (every command) checks formal constraints - sits OUTSIDE neural network
+    %% See ARCHITECTURE_CONDENSED.md §4.9 for safety filter design and §4.2 for soft/hard separation
+
     policy_substrate -->|Behavior<br/>commands| fast_controller
     fast_controller -->|Refined<br/>trajectory| safety_filter
     safety_filter --> robot_output
@@ -55,6 +95,11 @@ graph LR
     robot_output -.->|Action<br/>feedback| action_stream
     robot_output -.->|Observation<br/>feedback| semantic_stream
     
+    %% RISK SYSTEM - Asynchronous Monitoring
+    %% Monitors uncertainty, modulates autonomy confidence, escalates when needed
+    %% Independent from main loop; can request direct safety stop
+    %% See ARCHITECTURE_CONDENSED.md §3 (loops) and §4.2 (soft priors vs hard guarantees)
+
     %% Risk System Monitoring (Dashed)
     scene_graph -.->|State input| risk_system
     risk_system -.->|Risk<br/>escalation| safety_filter
@@ -63,6 +108,11 @@ graph LR
     %% DETAILED SUBGRAPH 1: PERCEPTION_DETAIL
     %% Expands the dual-stream perception approach with specific ML techniques
     %% ============================================================================
+    %% Detail: Perception techniques that produce the slot embeddings
+    %% Action stream uses SE(3)-equivariant inductive bias for rigid geometry
+    %% Semantic stream uses foundation models for flexible semantic understanding
+    %% Fusion via slot attention solves variable-cardinality object tracking
+    
     subgraph PERCEPTION_DETAIL["📊 PERCEPTION: ML TECHNIQUES"]
         action_geom["⚡ ACTION STREAM<br/>SE(3)-Equivariant Layers<br/>Fast geometry extraction<br/>Contrastive learning<br/>~100+ Hz"]
         semantic_seg["🎨 SEMANTIC STREAM<br/>SAM 2 / Foundation Models<br/>Surgical fine-tuning<br/>Rich semantic labels<br/>~5-10 Hz"]
@@ -79,6 +129,11 @@ graph LR
     %% DETAILED SUBGRAPH 2: POLICY_DETAIL
     %% Expands the policy execution with monitoring, modulation, and control hand-off
     %% ============================================================================
+    %% Detail: Policy composition, monitoring, and hand-off to control
+    %% Substrate generates behavior conditioned on scene, language, contracts
+    %% Monitoring detects confidence/OOD; modulation applies risk-aware adjustments
+    %% Hand-off emits short-horizon trajectories for controller to track precisely
+    
     subgraph POLICY_DETAIL["🎯 POLICY EXECUTION: ML TECHNIQUES"]
         comp_substrate["🧬 COMPOSITIONAL SUBSTRATE<br/>Hybrid SSM-Transformer<br/>Language-conditioned<br/>Behavior contracts<br/>5-20 Hz"]
         monitor_mod["📊 MONITORING & MODULATION<br/>Confidence scoring<br/>OOD detection<br/>Risk-aware modulation<br/>~20 Hz"]
@@ -95,6 +150,10 @@ graph LR
     %% DETAILED SUBGRAPH 3: FEEDBACK
     %% Expands online adaptation and risk escalation mechanisms
     %% ============================================================================
+    %% Detail: Learning and adaptation at runtime
+    %% Per-slot dynamics adapters specialize world model predictions
+    %% Risk escalation triggers safety stops when confidence drops
+    
     subgraph FEEDBACK["🔄 FEEDBACK & ADAPTATION: ML TECHNIQUES"]
         online_adapt["🔄 ONLINE ADAPTATION<br/>Per-slot dynamics adapters<br/>Contact-aware residuals<br/>In-deployment learning<br/>~20 Hz"]
         risk_esc["⚠️ RISK ESCALATION<br/>Confidence thresholds<br/>Safety trigger conditions<br/>Graceful fallback<br/>Asynchronous"]
@@ -110,6 +169,12 @@ graph LR
     %% LEGEND: Color Coding Strategy
     %% Explains the semantic meaning of each color category
     %% ============================================================================
+    %% Visual key: Map component colors to their role in the system
+    %% Learned (pink) components use neural networks and embeddings
+    %% Engineered (red) components provide formal guarantees
+    %% Deliberative (green) reasoning is slow but flexible
+    %% Perception (teal), Fusion (purple), Sensors (yellow) support state
+    
     subgraph LEGEND["📖 LEGEND: Color Coding Strategy"]
         legend_learned["🔴 LEARNED (ML)<br/>Adaptive neural networks<br/>Embeddings, trained policies"]
         legend_engineered["⚪ ENGINEERED/DETERMINISTIC<br/>Safety filters, formal<br/>verification, classical control"]
