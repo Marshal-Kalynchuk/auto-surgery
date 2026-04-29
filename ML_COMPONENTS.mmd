@@ -1,0 +1,86 @@
+graph LR
+    %% Sensor Inputs (Yellow)
+    sensors["🎥 SENSOR INPUTS<br/>Vision: 60-120 Hz<br/>Kinematics: 500 Hz<br/>Force: 1 kHz<br/>Audio: 48 kHz"]
+    
+    %% Perception - Dual Streams (Teal)
+    action_stream["⚡ ACTION STREAM<br/>SE(3)-Equivariant Encoders<br/>~100+ Hz"]
+    semantic_stream["🎨 SEMANTIC STREAM<br/>SAM 2<br/>~5-10 Hz"]
+    
+    %% Fusion/Integration (Purple)
+    slot_attention["🔗 SLOT ATTENTION<br/>Multi-object tracking<br/>~10-20 Hz"]
+    
+    %% State (Orange)
+    scene_graph["📍 SCENE GRAPH<br/>Object-centric state<br/>Persistent identities<br/>Continuous updates"]
+    
+    %% World Model (Teal - Perception/Geometry)
+    world_model["🌐 WORLD MODEL<br/>Embedding-conditioned dynamics<br/>5-20 Hz"]
+    
+    %% Planning (Green)
+    slow_planner["🧩 SLOW PLANNER<br/>Reasoning & Search<br/>0.5-2 Hz"]
+    
+    %% Policy (Pink - Learned)
+    policy_substrate["🎯 POLICY SUBSTRATE<br/>Hybrid SSM-Transformer<br/>Behavior generation<br/>5-20 Hz"]
+    
+    %% Fast Controller (Red - Engineered)
+    fast_controller["⚙️ FAST CONTROLLER<br/>MPC + Visual Servoing<br/>100-500 Hz"]
+    
+    %% Safety Filter (Red - Engineered)
+    safety_filter["🛡️ SAFETY FILTER<br/>Control Barrier Functions<br/>100-500 Hz"]
+    
+    %% Robot Output (Yellow)
+    robot_output["🤖 ROBOT COMMANDS<br/>Target trajectory<br/>Force/velocity profile<br/>Gripper commands"]
+    
+    %% Risk System (Parallel - Orange monitoring)
+    risk_system["⚠️ RISK MONITOR<br/>Conformal prediction<br/>Uncertainty aggregation<br/>Asynchronous"]
+    
+    %% Main Spine Flow - Left to Right
+    sensors -->|Multi-modal contrastive<br/>learning| action_stream
+    sensors -->|Visual grounding| semantic_stream
+    
+    action_stream -->|Joint slot<br/>embeddings| slot_attention
+    semantic_stream -->|Semantic<br/>attributes| slot_attention
+    
+    slot_attention -->|Scene state| scene_graph
+    scene_graph -->|State representation| slow_planner
+    scene_graph -->|Dynamics input| world_model
+    
+    world_model -->|Predictions| slow_planner
+    slow_planner -->|Affordance<br/>reasoning| policy_substrate
+    
+    policy_substrate -->|Behavior<br/>commands| fast_controller
+    fast_controller -->|Refined<br/>trajectory| safety_filter
+    safety_filter --> robot_output
+    
+    %% Feedback Loops (Dashed)
+    robot_output -.->|Action<br/>feedback| action_stream
+    robot_output -.->|Observation<br/>feedback| semantic_stream
+    
+    %% Risk System Monitoring (Dashed)
+    scene_graph -.->|State input| risk_system
+    risk_system -.->|Risk<br/>escalation| safety_filter
+    
+    %% Styling - Yellow
+    style sensors fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style robot_output fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    
+    %% Styling - Teal (Perception/Geometry)
+    style action_stream fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    style semantic_stream fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    style world_model fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    
+    %% Styling - Purple (Fusion/Integration)
+    style slot_attention fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px
+    
+    %% Styling - Orange (State & Risk)
+    style scene_graph fill:#ffcc80,stroke:#e65100,stroke-width:2px
+    style risk_system fill:#ffcc80,stroke:#e65100,stroke-width:2px
+    
+    %% Styling - Green (Deliberative)
+    style slow_planner fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    
+    %% Styling - Pink (Learned ML)
+    style policy_substrate fill:#f8bbd0,stroke:#c2185b,stroke-width:2px
+    
+    %% Styling - Red (Engineered/Deterministic)
+    style fast_controller fill:#ffcdd2,stroke:#c62828,stroke-width:2px
+    style safety_filter fill:#ffcdd2,stroke:#c62828,stroke-width:2px
