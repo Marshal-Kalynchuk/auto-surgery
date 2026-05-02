@@ -1,7 +1,8 @@
 # Condensed Autonomous Surgery Architecture
 
-**Source:** `ARCHITECTURE.md` draft v0.8
+**Source:** [`ARCHITECTURE.md`](ARCHITECTURE.md) draft v0.8 (includes v0.8.1 documentation-only alignment with the two-phase safety evaluator narrative; no separate architecture revision).
 **Purpose:** Condensed reference for the proposed autonomous surgery architecture — what the system is, how the components interact, and which technologies underpin each layer.
+**Full spec:** Per-component implementation status and expanded phasing tables are in [`ARCHITECTURE.md`](ARCHITECTURE.md) §9 and §10.
 
 ---
 
@@ -42,7 +43,7 @@ The goal is not to remove structure. The goal is to put structure in the right p
 At runtime, the system operates as a hierarchy of loops around a shared entity knowledge store:
 
 1. **Surgeon interface:** supplies goals, permissions, tags, corrections, and overrides.
-2. **Slow planner (~0.5–2 Hz):** receives signals from world model (prediction errors) and risk system (assessments); decides what to consolidate into entity state; translates surgeon goals into language directives, behavior contracts, modulation signals, attention targets, and escalation triggers.
+2. **Slow planner (~0.5–2 Hz):** receives signals from world model (prediction errors) and **async safety assessment** (safety evaluator; calibrated risk assessments, SafetySurface); decides what to consolidate into entity state; translates surgeon goals into language directives, behavior contracts, modulation signals, attention targets, and escalation triggers.
 3. **Policy substrate runtime (~5–20 Hz):** runs the learned compositional policy, monitors behavior contracts, handles OOD and confidence checks, and emits short-horizon target trajectories.
 4. **Fast controller (~100–500 Hz):** performs MPC, visual servoing, and force-aware tracking of the substrate's target trajectory.
 5. **Safety evaluator (asynchronous assessment ~10-20 Hz + synchronous command gate 100-500 Hz):** async assessment reads entity state and publishes a safety surface; sync gate checks commands against the safety surface + Layer 1 physical invariants. Absorbs former risk system capabilities (conformal prediction, per-entity risk scoring, escalation triggers). Replaces former safety filter with honest model-dependence.
@@ -54,9 +55,9 @@ The entity knowledge store is the shared workspace. All learned components read 
 Information flows through two paths into the entity knowledge store:
 
 - **Direct path (ungated):** Perception refreshes current observations each cycle (~10–20 Hz). Surgeon corrections write authoritative overrides unconditionally.
-- **Consolidated path (planner-gated):** World model prediction errors, risk assessments, and event records flow to the slow planner. The planner decides what gets consolidated into each entity's interaction digest, at what priority, and with what framing. A digest update network executes planner-selected consolidations at 0.5–2 Hz.
+- **Consolidated path (planner-gated):** World model prediction errors, **async-assessment** risk signals, and event records flow to the slow planner. The planner decides what gets consolidated into each entity's interaction digest, at what priority, and with what framing. A digest update network executes planner-selected consolidations at 0.5–2 Hz.
 
-The safety filter sits between every commanded action and the robot, regardless of whether the command came from the learned substrate, the controller, or surgeon teleoperation.
+The **sync command gate** (phase of the safety evaluator; see §4.10) sits between every commanded action and the robot, regardless of whether the command came from the learned substrate, the controller, or surgeon teleoperation.
 
 ---
 
@@ -76,7 +77,7 @@ The embedding-first choice preserves continuous structure. A novel forceps may b
 
 **Tumor resection illustrates why continuous state matters.** The tumor entity is not a static class; it is a changing volume, margin geometry, and risk surface relative to tagged vessels and eloquent tissue. Clinical success is often not equivalent to "zero residual tumor." Intentional subtotal resection, maximal safe resection with planned small remnant, or debulking under a specific contract can all be successful outcomes. A binary or coarse label (`present`/`absent`/`partial`) conflates situations that require opposite cautions and gives the model almost no usable gradient signal for learning safe continuation. The embedding-first representation keeps the primary state continuous so similarity and difference along the resection trajectory can be learned rather than erased at the first discrete threshold.
 
-**Physically overlapping entities illustrate why per-entity decomposition is correct.** Consider a vein draped over a tumor. They occupy overlapping space, are mechanically coupled, and appear visually intertwined — but they must be separate entities. They have different dynamics (pressurized vessel vs. bulk tissue mass), different affordances (preserve vs. resect), different risk profiles (catastrophic hemorrhage vs. margin management), and different surgeon constraints (hard no-go vs. active removal target). If the system merged them into a single entity, it could not express "remove this, preserve that" — which is the core surgical problem. The entity decomposition gives the planner, safety filter, and surgeon UI separate handles for each, while the world model's interaction terms (§4.9) and spatial proximity in embedding space capture exactly how they are physically coupled. A directive like "resect tumor at inferior margin, maintaining 2mm clearance from tagged vessel" only makes sense with two distinct entities carrying separate constraints. The relationship between them is not lost — it is represented in the right place: interaction coupling in the world model, spatial structure in the SE(3)-equivariant features, and strategic reasoning in the planner.
+**Physically overlapping entities illustrate why per-entity decomposition is correct.** Consider a vein draped over a tumor. They occupy overlapping space, are mechanically coupled, and appear visually intertwined — but they must be separate entities. They have different dynamics (pressurized vessel vs. bulk tissue mass), different affordances (preserve vs. resect), different risk profiles (catastrophic hemorrhage vs. margin management), and different surgeon constraints (hard no-go vs. active removal target). If the system merged them into a single entity, it could not express "remove this, preserve that" — which is the core surgical problem. The entity decomposition gives the planner, **safety evaluator**, and surgeon UI separate handles for each, while the world model's interaction terms (§4.9) and spatial proximity in embedding space capture exactly how they are physically coupled. A directive like "resect tumor at inferior margin, maintaining 2mm clearance from tagged vessel" only makes sense with two distinct entities carrying separate constraints. The relationship between them is not lost — it is represented in the right place: interaction coupling in the world model, spatial structure in the SE(3)-equivariant features, and strategic reasoning in the planner.
 
 **Entity splitting is a known failure mode of slot attention.** The competitive softmax in the slot attention loop encourages each perceptual feature to be predominantly explained by one slot, but does not strictly enforce one-to-one entity-to-slot mapping. A large or heterogeneous entity (e.g., a multi-lobed tumor, a long vessel) could have different spatial regions claimed by different slots if those regions look sufficiently different in feature space. This "over-segmentation" is mitigated by several architectural properties: persistent identity tracking across frames makes sporadic splits unstable; entity-level training supervision penalizes gratuitous splitting; and the downstream planner would observe two entities with near-identical embeddings and overlapping spatial extent. However, genuinely ambiguous boundaries (partially resected tissue), under-training, and distribution shift remain risk factors. Custom streaming adaptations should include explicit merge/split detection — slot-merging heuristics or a learned merge/split head that runs after the binding pass — as part of the research investment in streaming variable-cardinality binding.
 
@@ -93,7 +94,7 @@ The embedding-first choice preserves continuous structure. A novel forceps may b
 - **Current observation** (refreshed ~10–20 Hz): pose, visual features, contact state from perception. What we see right now.
 - **Interaction digest** (evolves at planner rate, 0.5–2 Hz): distilled understanding of past interactions — tissue compliance, deformation patterns, bleeding tendencies, tool response history. Patient-specific calibration learned during the procedure.
 - **Entity embedding** (fuses observation + digest): the primary representation consumed by all learned components. Carries both "what this entity looks like now" and "what we have learned about it."
-- **Pre-computed priors** (optional): consumer-specific derivations from the digest (e.g., linearized compliance for the world model, risk adjustment for the risk system).
+- **Pre-computed priors** (optional): consumer-specific derivations from the digest (e.g., linearized compliance for the world model, risk readouts derived from **async safety assessment** / SafetySurface for downstream consumers).
 
 The two-path input model determines how entity state evolves:
 
@@ -112,7 +113,7 @@ The planner's role as memory gate is principled: it has strategic context so it 
 
 **Alternative considered:** Treat scene state as a static snapshot, updated by perception each cycle, with temporal memory implicit in adapter weights and recurrent state. This scatters patient-specific calibration across components, creates no explicit mechanism for deciding what is worth remembering, and fragments multi-scale temporal requirements.
 
-**Alternative considered:** Direct world-model and risk-system writes to entity state without planner gating. This creates write conflicts between multiple sources and loses the strategic memory control the planner provides.
+**Alternative considered:** Direct world-model and **async-assessment** writes to entity state without planner gating. This creates write conflicts between multiple sources and loses the strategic memory control the planner provides.
 
 ### 4.3 Separation of Safety Dedication from Task Commitment
 
@@ -126,14 +127,14 @@ The planner's role as memory gate is principled: it has strategic context so it 
 
 ### 4.4 Multi-Loop Control Hierarchy
 
-**Decision.** Separate loops for deliberation, learned policy execution, fast control, and risk monitoring:
+**Decision.** Separate loops for deliberation, learned policy execution, fast control, and **async safety assessment** (within the safety evaluator):
 
 | Loop | Rate | Role |
 |---|---|---|
 | Slow planner | ~0.5–2 Hz | Directive composition, deliberative reasoning, memory consolidation, escalation |
 | Policy substrate runtime | ~5–20 Hz | Learned behavior generation, contract monitoring, OOD/confidence checks |
 | Fast controller | ~100–500 Hz | MPC, visual servoing, force-aware control |
-| Risk system | Asynchronous | Uncertainty and risk monitoring with direct override |
+| Async safety assessment | ~10–20 Hz | Calibrated uncertainty, per-entity risk scores, SafetySurface publication, escalation triggers, direct override path (phase 1 of safety evaluator; §4.10) |
 
 **Why this design.** Surgical autonomy has conflicting timing requirements. Deliberative reasoning about goals, anatomy, and escalation can take hundreds of milliseconds. Contact control and servoing need millisecond-scale response. A single loop cannot satisfy both.
 
@@ -152,7 +153,7 @@ The planner's role as memory gate is principled: it has strategic context so it 
 
 The streams are not required to share the same backbone or architecture. Each may use a different model family, inductive bias, and training recipe as long as outputs align in the entity-binding fusion stage.
 
-**Why this design.** Control and semantic understanding need different compromises. The fast loop needs geometry, pose, contact, and motion fields quickly. The planner and risk system need richer semantic labels, anatomy, segmentation, and context but can tolerate higher latency. Splitting streams avoids forcing one network to be both a millisecond-scale geometric estimator and a heavy semantic reasoner.
+**Why this design.** Control and semantic understanding need different compromises. The fast loop needs geometry, pose, contact, and motion fields quickly. The planner and **async safety assessment** (plus semantic perception feeding them) need richer semantic labels, anatomy, segmentation, and context but can tolerate higher latency. Splitting streams avoids forcing one network to be both a millisecond-scale geometric estimator and a heavy semantic reasoner.
 
 **Technologies.** Action stream: SE(3)-equivariant attention layers (SE(3)-Transformer / Equiformer). Semantic stream: foundation model (SAM 2 / MedSAM2 / surgical VLA backbone), fine-tuned on surgical data. Entity binding: variable-cardinality slot attention head (DINOSAUR / OSRT / custom streaming adaptation) that integrates both streams and maintains persistent entity identities across frames.
 
@@ -192,7 +193,7 @@ The substrate composes behavior in real time across patterns learned during trai
 
 **Decision.** The planner emits natural-language directives plus behavior contracts. Directives are drawn from a continuous language distribution, not a closed vocabulary. Contracts contain both hard and soft components.
 
-- **Hard:** formal safety invariants, abort conditions, force envelopes, forbidden constraint types, required constraint types. Consumed by the safety filter and deterministic contract monitoring.
+- **Hard:** formal safety invariants, abort conditions, force envelopes, forbidden constraint types, required constraint types. Consumed by the **sync command gate** (safety evaluator) and deterministic contract monitoring.
 - **Soft:** success criteria, quality measures, surgeon intent summaries, affordance requirements. Consumed by the substrate as conditioning and evaluated via learned monitor heads.
 
 **Why this design.** Surgeons naturally express intent in language, and many surgical success criteria are not clean formal predicates. "Remove this tissue cleanly without damaging adjacent parenchyma" has hard safety constraints and soft quality goals. The mixed schema captures what surgeons actually want without forcing soft success criteria into formal predicates and without letting fuzzy criteria contaminate the safety surface.
@@ -207,7 +208,7 @@ The substrate composes behavior in real time across patterns learned during trai
 
 **How entity embeddings drive prediction.** Because dynamics are conditioned on entity embeddings within the full entity knowledge store (poses, contact edges, events, interaction digests), the world model reasons over the whole surgical field in one forward pass. Anatomically or geometrically neighboring regions tend to land in nearby regions of embedding space, so contact or deformation observed on one entity can sharpen predictions for adjacent entities before the tool touches them. Bleed risk and fluid propagation can spread through coupled entity updates and interaction terms — a learned prior validated by calibration and phase-gated evaluation, not assumed a priori.
 
-**Multimodal fusion for deformable tissue.** Compliance, deformation, and interaction coupling are inferred by relating SE(3)-structured action geometry to stereo-evolved surface state, applied wrenches, and temporal history. The result is a predictive model (residual over the physics prior) with calibrated uncertainty — not a formal guarantee that the patient matches a particular material law. Hard safety remains with surgeon tags and the safety filter.
+**Multimodal fusion for deformable tissue.** Compliance, deformation, and interaction coupling are inferred by relating SE(3)-structured action geometry to stereo-evolved surface state, applied wrenches, and temporal history. The result is a predictive model (residual over the physics prior) with calibrated uncertainty — not a formal guarantee that the patient matches a particular material law. Hard safety remains with surgeon tags and the **safety evaluator** (sync command gate + SafetySurface from async assessment).
 
 **Prediction errors as calibration signal.** When the world model's prediction diverges from observation, these prediction errors flow to the planner. The planner decides whether to consolidate the lesson into the entity's interaction digest, where it becomes patient-specific calibration available to all downstream components.
 
@@ -271,8 +272,7 @@ The substrate composes behavior in real time across patterns learned during trai
 | **Compositional policy substrate** | The action source. Composes behavior from language + contracts + context + learned patterns. Emits short-horizon target trajectories at ~5–20 Hz. | Hybrid SSM-Transformer (Mamba-2 / Jamba lineage), bootstrap from VLA (Pi-zero / OpenVLA), LoRA fine-tuning | **Primary research investment — largest in the project** (multi-year) |
 | **System attention coordination** | Aggregates planner modulation, risk signals, attention targets, and halting flags into a unified per-tick modulation state. All components consume this single state. | Deterministic aggregation logic (max for caution, union for targets, fail-closed) | Engineering |
 | **Fast controller** | Tracks substrate target trajectories at ≥100 Hz with tight sensor feedback. | MPC, visual servoing, impedance/admittance control | Off-the-shelf |
-| **Risk system** | Calibrated uncertainty, per-entity risk scores, escalation triggers, direct safety override. ≥10 Hz updates; ≤50 ms override path. | Conformal prediction wrappers (streaming variant is small research), per-entity risk scoring | Engineering + small research |
-|| **Safety evaluator (v0.8)** | Two-phase entity-informed safety. Async assessment (~10-20 Hz) reads entity state, publishes interpretable safety surface. Sync command gate (100-500 Hz) checks commands against surface + Layer 1 physical invariants. Absorbs risk system capabilities. Final arbiter, fail-closed. | Layer 1: CBFs, verified sub-checks. Layer 2 async: conformal prediction, safety head training (separate from policy). ≤2 ms p99 sync gate. | Engineering (sync gate) + research (async assessment) |
+| **Safety evaluator (v0.8)** | Two-phase entity-informed safety. **Async assessment** (~10–20 Hz): reads entity state, publishes SafetySurface; conformal uncertainty, per-entity risk scores, escalation, ≤50 ms override path. **Sync command gate** (100–500 Hz): checks every command against surface + Layer 1; fail-closed. Absorbs former standalone risk-monitor responsibilities. Final arbiter. | Layer 1: CBFs, verified sub-checks. Layer 2 async: conformal prediction, safety head training (separate from policy). ≤2 ms p99 sync gate. | Engineering (sync gate) + research (async assessment) |
 | **Data pipeline and case log** | Synchronized multimodal logging, case storage, curation, failure analysis. The training flywheel. | Vector DB + similarity search, schema-versioned immutable storage | Engineering |
 
 ---
@@ -291,7 +291,7 @@ The architecture rejects it as the end-state because it does not scale to surgic
 - Per-skill validation does not prove behavior under novel combinations.
 - A fixed library makes autonomy expansion a software-engineering bottleneck instead of a data-and-evaluation problem.
 
-The proposed architecture keeps the conventional stack's strongest parts: explicit entity state, classical fast control, simulator parity, logging, and a verified safety filter. It replaces the brittle center — the fixed skill library — with a learned substrate whose capability frontier expands through data, training, evaluation, and phased deployment.
+The proposed architecture keeps the conventional stack's strongest parts: explicit entity state, classical fast control, simulator parity, logging, and a **verified safety evaluator** (command path ends at the **sync command gate**). It replaces the brittle center — the fixed skill library — with a learned substrate whose capability frontier expands through data, training, evaluation, and phased deployment.
 
 ### 6.2 Inference-Time Episodic Memory / RAG
 
@@ -319,8 +319,8 @@ The architecture does not try to invent every layer. It uses existing or mature 
 | MPC, visual servoing, impedance/admittance control | Fast controller | Mature real-time control techniques |
 | SOFA-Framework | Simulator | Open-source surgical soft-body simulation |
 | MCTS / MPPI / CEM / trajectory optimization | Slow planner search | Directive search over world-model rollouts |
-| Conformal prediction | Risk system, OOD detection | Calibrated uncertainty for learned predictions |
-| alpha-beta-CROWN / Marabou | Safety filter sub-checks | Formal verification of small neural geometric predicates |
+| Conformal prediction | Async safety assessment, OOD detection | Calibrated uncertainty for learned predictions |
+| alpha-beta-CROWN / Marabou | Sync command gate (safety evaluator) | Formal verification of small neural geometric predicates |
 | LoRA | Substrate fine-tuning | Fast surgeon-teaching updates |
 | CLIP-style contrastive training | Joint embedding model | Multi-modal alignment across (vision, geometry, kinematics, force, language) |
 | Dreamer / TD-MPC2 lineage | World model rollouts | Latent planning over predicted futures |
@@ -341,7 +341,7 @@ The rule: use fixed software where the interface is stable and the behavior is m
 
 ### Mitigations
 
-- The safety filter catches unsafe commands regardless of substrate quality.
+- The **safety evaluator** catches unsafe commands regardless of substrate quality.
 - Contract monitoring catches behavioral drift.
 - OOD detection gates autonomy at the capability frontier.
 - Phased deployment limits exposure to the distribution where evaluation shows reliability.
@@ -381,6 +381,6 @@ This architecture is intentionally hybrid:
 - It is not pure end-to-end VLA, because clinical autonomy needs entity state, multi-loop control, formal safety boundaries, auditability, and surgeon-confirmed constraints.
 - It is not RAG-driven, because behavior-changing knowledge should enter through evaluated training and fine-tuning rather than unverified inference-time examples.
 
-The proposed system is a structured learned autonomy stack: persistent entity representations with continuous multimodal embeddings, an evolving entity knowledge store with planner-gated consolidation, a compositional policy substrate conditioned on language and contracts, multi-loop control with classical fast feedback, calibrated risk assessment, and a verified safety filter that sits between every command and the robot.
+The proposed system is a structured learned autonomy stack: persistent entity representations with continuous multimodal embeddings, an evolving entity knowledge store with planner-gated consolidation, a compositional policy substrate conditioned on language and contracts, multi-loop control with classical fast feedback, calibrated risk assessment inside **async safety assessment**, and a **verified sync command gate** (safety evaluator) that sits between every command and the robot.
 
 The central claim is that surgical autonomy will scale only if the system can learn continuous structure and compose behavior across contexts, while preserving hard deterministic safety at the robot boundary. This architecture is designed around that claim.

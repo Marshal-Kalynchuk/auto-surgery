@@ -1,13 +1,23 @@
 # Autonomous Surgery Architecture Specification
 
 **Status:** Draft v0.8
-**Last updated:** 2026-04-30
+**Last updated:** 2026-05-02
 **Scope:** Reference architecture for the autonomous neurosurgery program at Neuroarm
 **Audience:** Engineers building the system, leadership setting expectations, researchers identifying contribution surfaces
+
+**Executive summary:** [ARCHITECTURE_CONDENSED.md](ARCHITECTURE_CONDENSED.md)
+
+**Safety terminology (normative, v0.8):** Use **safety evaluator** for the dedicated safety path as a whole (Layer 1 physical invariants + Layer 2 async assessment + sync command gate; §5.10). **Async safety assessment** publishes the **SafetySurface** from entity state (~10–20 Hz). The **sync command gate** checks every command against that surface plus Layer 1 (100–500 Hz). The legacy term **safety filter** means the **sync command gate** / final command gate only; avoid using it for the full evaluator. Surgeon **constraint types** and contract **hard slots** remain deterministic kinds; entity-informed geometry and envelopes come from the SafetySurface, not from bypassing hard commitments.
 
 ---
 
 ## 0. Changelog and rationale
+
+### v0.8.1 (2026-05-02) — Documentation alignment with two-phase safety evaluator (no architectural change)
+
+**Change.** Brought §2–§4, §5.2 and related layer text, §5.9 system-attention diagrams, §9 status table, §11 open-question wording, and §12 glossary into alignment with the v0.8 safety evaluator: updated §4 diagram (SafetySurface → planner, entity knowledge store, no standalone risk-system box, no RAG in planner bundle), reframed §3.2–§3.3 and §3.7 table, replaced stale “safety filter only / unchanged from v0.2” claims in normative sections, and annotated v0.7 changelog text superseded by v0.8.
+
+**Motivation.** The v0.8 changelog and §5.10 were authoritative, but older paragraphs and figures still described a monolithic safety filter and separate risk system.
 
 ### v0.8 (2026-04-30) — Safety evaluator absorbs risk system; entity-informed assessment replaces formal independence claim
 
@@ -61,7 +71,7 @@ The planner's role as memory gate is principled: it has strategic context, goals
 - Risk signals to planner ≈ amygdala arousal/salience
 - Surgeon corrections ≈ external authoritative teacher (no brain analogue)
 
-**Safety decoupling preserved.** The safety filter does not read the entity knowledge store (contains learned representations and strategic context). It reads a separate, decoupled surface: current poses from perception, surgeon-authored constraints, force/velocity envelopes, formal predicates. Learned signals flow through the risk system to *raise* hard stops, never to *relax* them. The hard/soft separation principle (§4.2 in ARCHITECTURE_CONDENSED) remains intact.
+**Safety decoupling preserved (v0.7 wording; superseded by v0.8).** *The mechanism described in the next sentences applied before the two-phase safety evaluator. In v0.8, **async safety assessment** reads entity embeddings and interaction digests to publish a **SafetySurface**; the **sync command gate** enforces it plus Layer 1. Learned signals may *tighten* constraints or *veto*; they must not *relax* surgeon-authored hard commitments — that separation principle remains (see ARCHITECTURE_CONDENSED §4.3, §5.10 here).* At v0.7 we stated: the safety filter did not read the entity knowledge store (contains learned representations and strategic context). It read a separate, decoupled surface: current poses from perception, surgeon-authored constraints, force/velocity envelopes, formal predicates. Learned signals flowed through the risk system (now absorbed into async assessment, §5.10) to *raise* hard stops, never to *relax* them.
 
 **Three new components / mechanisms:**
 1. **Digest update network.** Gated recurrent model (GRU or transformer-based write mechanism) that consolidates selected signals into updated interaction digests. Runs ~0.5-2 Hz, only when planner signals significant events.
@@ -70,15 +80,17 @@ The planner's role as memory gate is principled: it has strategic context, goals
 
 **Sections affected:** §3.1-3.2 (system overview rewritten around entity knowledge store), §4 (diagrams updated), §5.2 (entity knowledge store detailed design), §5.3 (planner gains memory-gating role), §5.4 (world model outputs to planner for consolidation), §5.8 (risk system outputs to planner for consolidation), §6.5-6.6 (substrate consumes evolved entity embeddings), §8 (case log is event archive for offline training), §10 (per-entity patient-specific calibration now explicit), §11 (open questions: consolidation policy, digest architecture, surgeon override scope), §12 (glossary: entity knowledge store, interaction digest, digest update network, event archive, consolidated path, direct path).
 
-**What stays.** Dual-stream perception, slot attention (object binding), safety filter (hard constraints, separate surface), policy substrate (SSM-Transformer), multi-loop control hierarchy, all off-the-shelf components, safety/learning separation principle. All remain unchanged.
+**What stays.** Dual-stream perception, slot attention (object binding), dedicated command gate / safety path (v0.8: two-phase safety evaluator), policy substrate (SSM-Transformer), multi-loop control hierarchy, all off-the-shelf components, safety/learning separation principle. All remain unchanged in intent.
 
-**What changes (deep):** Scene-graph concept replaced with entity knowledge store. Planner gains explicit memory-gating role. Perception becomes direct-path writer (not via planner). World model and risk system report to planner (not direct writes). Entity embedding now carries three stacked components: current observation (perception-driven), interaction digest (planner-consolidated), pre-computed priors (consumer-specific). This stack enables per-entity dynamics calibration that persists and compounds across interactions within a procedure.
+**What changes (deep):** Scene-graph concept replaced with entity knowledge store. Planner gains explicit memory-gating role. Perception becomes direct-path writer (not via planner). World model and risk-related assessments (v0.8: inputs to async assessment and planner) report to planner (not direct writes to digests). Entity embedding now carries three stacked components: current observation (perception-driven), interaction digest (planner-consolidated), pre-computed priors (consumer-specific). This stack enables per-entity dynamics calibration that persists and compounds across interactions within a procedure.
 
-**Backward compatibility.** The external API (what components produce and consume, what the safety filter reads, what the surgeon sees) changes minimally. What changes internally is the representation of shared state and the temporal accumulation mechanism. Code consuming entity embeddings sees richer state; code writing poses/tags sees the same interface.
+**Backward compatibility.** The external API (what components produce and consume, what the safety evaluator exposes, what the surgeon sees) changes minimally. What changes internally is the representation of shared state and the temporal accumulation mechanism. Code consuming entity embeddings sees richer state; code writing poses/tags sees the same interface.
 
 ---
 
 ### v0.6 (2026-04-29) — System attention coordination of modulation channels
+
+*Post-v0.8:* References below to a standalone **risk system** describe the pre-v0.8 layout; risk-modulation outputs are produced by **async safety assessment** (§5.10), which publishes `RiskState` into this aggregation.
 
 **Change.** Four independent modulation signals — planner modulation, voluntary attention, risk override, and adaptive halting — are now coordinated through a single "system attention" module that aggregates them into a coherent per-tick modulation state. This replaces independent consumer reading of each signal with a unified interface and single inspection surface.
 
@@ -86,39 +98,39 @@ The planner's role as memory gate is principled: it has strategic context, goals
 
 1. **Planner modulation.** Bias signals from the slow planner (caution_level, time_pressure, attention_targets) that vary more frequently than full directive re-steps.
 2. **Voluntary attention.** Soft cues to the action-stream encoder's compute about which slots to prioritize ("look here").
-3. **Risk override.** Direct intervention from the risk system when risk exceeds hard thresholds; can escalate or request modulation changes.
+3. **Risk override.** Direct intervention from **async safety assessment** (safety evaluator; §5.10) when risk exceeds hard thresholds; can escalate or request modulation changes. *(Pre-v0.8 wording referred to a standalone “risk system.”)*
 4. **Adaptive halting.** Internal halting signals from the recurrent reasoning module and online monitors (substrate confidence, OOD detection, contract drift), used to vary loop speeds or trigger re-planning.
 
-Previously, each consumer (substrate runtime, planner, fast controller, risk system) read these signals independently, leading to potential inconsistencies: the substrate could be executing at high confidence while the risk system had raised caution, or the planner could be issuing a new modulation while the reasoning module was halting to re-deliberate.
+Previously, each consumer (substrate runtime, planner, fast controller, and the **pre-v0.8 standalone risk monitor** — **now** **async safety assessment**, §5.10) read these signals independently, leading to potential inconsistencies: the substrate could be executing at high confidence while the risk path had raised caution, or the planner could be issuing a new modulation while the reasoning module was halting to re-deliberate.
 
 **System attention module (new in v0.6):**
 
 A lightweight coordination component runs once per tick and produces a unified **SystemAttentionState** that aggregates:
 
-- **Aggregated caution level.** Max of planner caution and risk-system caution (fail-closed: higher caution wins).
-- **Merged attention targets.** Union of planner attention targets and risk-system flagged slots.
-- **Time pressure.** Planner-set, but modulated down by risk system if escalation is near.
+- **Aggregated caution level.** Max of planner caution and **async-assessment** caution (`RiskState`; fail-closed: higher caution wins).
+- **Merged attention targets.** Union of planner attention targets and **async-assessment** flagged slots.
+- **Time pressure.** Planner-set, but modulated down by **async safety assessment** signals if escalation is near.
 - **Halting priority.** Boolean flag set if reasoning or confidence monitoring requests adaptive halting.
-- **Escalation reason (if any).** Aggregates reasons from risk system, contract violation, or OOD detection into a single escalation event, routed to the planner immediately.
+- **Escalation reason (if any).** Aggregates reasons from **async safety assessment**, contract violation, or OOD detection into a single escalation event, routed to the planner immediately.
 
-All other components (substrate runtime, fast controller, risk system monitoring heads) consume this unified state instead of reading signals independently. This reduces:
+All other components (substrate runtime, fast controller, **async-assessment outputs feeding system attention**) consume this unified state instead of reading signals independently. This reduces:
 
 - **Signal inconsistency:** Components act on the same modulation snapshot.
 - **Debugging surface:** One place to inspect "why did the system choose this behavior at this moment?" instead of tracing four independent signal sources.
-- **Latency analysis:** All modulation updates are synchronous within a tick; no race conditions between planner and risk system.
+- **Latency analysis:** All modulation updates are synchronous within a tick; no race conditions between planner and **async safety assessment**.
 
 **Mechanism (not learned):** The system attention module is deterministic, not ML-based. It is a small coordination layer that implements aggregation logic (max, union, priority rules) and routes escalation events. The planner retains full deliberative authority — it decides whether to re-condition, modulate further, or escalate to the surgeon. This is consistency and inspectability, not automation.
 
-**What stays.** The planner, risk system, substrate, and fast controller retain their existing responsibilities. The planner still produces PlannerModulation; risk system still fires events; substrate runtime still monitors contracts. The system attention module is purely a coordination layer, not a replacement for any of those.
+**What stays.** The planner, **safety evaluator** (async assessment publishes `RiskState` into this aggregation), substrate, and fast controller retain their responsibilities. The planner still produces PlannerModulation; **async assessment** still publishes risk modulation; substrate runtime still monitors contracts. The system attention module is purely a coordination layer, not a replacement for any of those.
 
-**Sections affected:** §5.5 (planner produces modulation; planner notes system attention dependency), §5.6.3 (contract monitoring now references system attention state), §5.8 (risk system now routes through system attention), new §5.11 (System attention module), §9 (implementation status updated), §11 (open questions: modulation conflict resolution), §12 (glossary: SystemAttentionState).
+**Sections affected:** §5.5 (planner produces modulation; planner notes system attention dependency), §5.6.3 (contract monitoring now references system attention state), §5.8 (**former** risk-system capabilities absorbed into async assessment; signals route through system attention), new §5.11 (System attention module), §9 (implementation status updated), §11 (open questions: modulation conflict resolution), §12 (glossary: SystemAttentionState).
 
 ### v0.5 (2026-04-28) — Episodic memory removed; subtractive simplification
 
 **Change.** The "episodic memory" architectural layer (RAG over past surgical cases, with retrieved cases entering the substrate's conditioning bundle as in-context examples) is removed. It is not replaced by a learned-memory mechanism inside the substrate or by anything else architectural. The system's memory is fully accounted for by:
 
 1. **Substrate weights** — semantic / general knowledge, updated by training.
-2. **Substrate recurrent state + persistent scene graph** — within-procedure working memory.
+2. **Substrate recurrent state + persistent slot-level state (entity knowledge store)** — within-procedure working memory.
 
 That's it. There is no inference-time retrieval of past cases. There is no "episodic memory" as a separate architectural component.
 
@@ -141,7 +153,7 @@ The case *log* still exists — it's an operational artifact for surgeon UI, aud
 The four revisions:
 
 1. **Affordance space, not affordance list.** Affordances are now a continuous learned subspace of the slot embedding (affordance space). Named affordance predicates (`graspable_along_axis`, `has_cutting_edge`, etc.) are *labeled regions* of that space — readout heads, not the source of truth. Behavior contracts can reference either named affordances or affordance-space neighborhoods.
-2. **Tag schema as closed constraint types + open natural-language content.** Surgeon tags now have two layers: a closed set of *constraint types* (`no_go_region`, `force_limit`, `proximity_alert`, `do_not_action`) that the safety filter consumes deterministically, and open *natural-language content* (e.g., "the proximal segment of vessel_018") for surgeon communication, episodic retrieval, and audit. Surgeons interact in language; the system anchors language to slots; constraints carry both layers.
+2. **Tag schema as closed constraint types + open natural-language content.** Surgeon tags now have two layers: a closed set of *constraint types* (`no_go_region`, `force_limit`, `proximity_alert`, `do_not_action`) that the safety filter consumes deterministically, and open *natural-language content* (e.g., "the proximal segment of vessel_018") for surgeon communication and case-log / training-curation lookup (UI, audit). Surgeons interact in language; the system anchors language to slots; constraints carry both layers.
 3. **Directive distribution, not directive vocabulary.** Directives are not an enumerated list. The substrate is trained on a continuous *distribution* of natural-language directives. Phasing measures this distribution's coverage and reliability, not the count of supported "skills."
 4. **Mixed behavior-contract schema.** Contracts now have two slot classes: *hard slots* (formally verifiable predicates over interpretable state, consumed by the safety filter) and *soft slots* (free-form natural-language success criteria and quality measures, consumed by the substrate as conditioning and by the runtime via learned heads).
 
@@ -157,11 +169,13 @@ A fifth minor refinement (v0.4 only): episodic memory stores cases as multi-view
 
 **Change.** The discrete skill library is removed as an architectural artifact. The action source is now a single compositional policy substrate — a learned neural network that consumes the full context bundle (scene, embeddings, episodic retrievals, language directive, risk state, planner modulation, recent events) and produces commanded actions or short-horizon target trajectories. Skill names persist as language-level conditioning interfaces, as retrieval keys for episodic memory, and as anchors for behavioral contracts. They are not code modules. There is no skill registry, no per-skill state machine, no per-skill implementation, no skill-migration path from classical to learned.
 
+*Superseded by v0.5:* The bundle above described the pre–v0.5 substrate input list. Episodic retrievals and inference-time retrieved cases were removed; skill names remain language conditioning, contract anchors, and **case-log index keys** (audit, curation), not substrate-conditioning retrieval keys.
+
 **Why.** The brain's motor system is not a discrete registry. It is a continuous reinforced policy space where similar patterns share substrate, attention modulates execution at any granularity, and novel situations are handled by composing learned primitives across contexts. A surgeon trained separately on suturing and cauterization can produce a competent suture-during-bleed response without ever having been trained on that specific composition — because the underlying motor system composes natively. A discrete skill library, multi-level or otherwise, cannot do this: novel compositions require new skills, which require new training and validation, which is exactly the brittleness we want to avoid.
 
 This also aligns with where foundation-model robotics is heading (RT-2 → OpenVLA → Pi-zero / π0.5 lineage): one learned policy substrate conditioned on language and context, not N separately-engineered skill modules.
 
-**What stays.** Skill names persist as natural-language tokens the surgeon uses, as conditioning keys for the substrate, and as retrieval keys for episodic memory. Skill contracts (pre/post-conditions, required affordances, forbidden tags, safety invariants) persist as behavioral specifications consumed by the planner for goal monitoring and by the safety filter for hard-constraint envelope selection. The safety filter operates on commanded actions; whether those came from a "skill" or from the substrate's compositional output is invisible to it.
+**What stays.** Skill names persist as natural-language tokens the surgeon uses, as conditioning keys for the substrate, and as index keys for case-log queries (audit, curation). Skill contracts (pre/post-conditions, required affordances, forbidden tags, safety invariants) persist as behavioral specifications consumed by the planner for goal monitoring and by the safety filter for hard-constraint envelope selection. The safety filter operates on commanded actions; whether those came from a "skill" or from the substrate's compositional output is invisible to it.
 
 **What's lost (honestly).** Step-by-step debuggability is harder; behavioral testing replaces structural testing; predictability for surgeons requires building a different kind of trust; data demands are substantially higher; the substrate is one giant research effort rather than N parallel skill-engineering efforts.
 
@@ -206,7 +220,7 @@ The architecture is designed to support a progression of capabilities — from a
 3. **Multi-timescale control.** Different decisions happen at different rates and have different architectures, all sharing scene state.
 4. **Sim/real parity.** The same code runs against the simulator and the real robot. No bespoke sim-only or real-only logic above the sensor/actuator layer.
 5. **Forward-compatibility with foundation-model improvements.** Components like the perception encoder are swappable as the field improves; the architecture does not depend on any one model.
-6. **Verifiable safety.** A formally specified, runtime-verified safety filter is the final arbiter of every commanded action. This is non-negotiable.
+6. **Verifiable safety.** Every commanded action passes through the **safety evaluator** (§5.10): **Layer 1** (physical invariants) and **sync command gate** logic are formally specified and runtime-verified; **async safety assessment** produces a calibrated **SafetySurface** (phase-gated evaluation, conservative when uncertain). Fail-closed defaults and unconditional surgeon override are non-negotiable.
 
 ### 2.2 Non-goals
 
@@ -229,27 +243,27 @@ The world state is a graph of object slots — not a global field, not an image,
 
 **Surgeon-authored explicit tags are kept separately and remain authoritative for hard safety constraints, with two layers:**
 
-- **Constraint type** (closed enum, formally specified): `no_go_region`, `force_limit`, `proximity_alert`, `do_not_action(action_class)`, etc. These are the formal *kinds* of constraint the safety filter knows how to enforce.
+- **Constraint type** (closed enum, formally specified): `no_go_region`, `force_limit`, `proximity_alert`, `do_not_action(action_class)`, etc. These are the formal *kinds* of constraint the **sync command gate** enforces (using the SafetySurface and Layer 1; §5.10).
 - **Tag content** (open, natural-language, slot-anchored): the surgeon's natural-language reference for what this constraint applies to ("the proximal segment of vessel_018"; "tissue that bled at minute 12"; "the small branch I flagged earlier"). The system anchors language to a specific slot or scene region using the embedding model and recent context; the surgeon visually confirms the anchor before the constraint becomes active.
 
-The constraint type is what the safety filter checks; the content is what the surgeon, the planner's reasoning module, the case log (for surgeon UI), and the audit log use. The two-layer tag is how surgeons interact in language while the safety filter still gets a deterministic constraint to enforce.
+The constraint type is what the sync gate enforces (with SafetySurface parameterization where applicable); the content is what the surgeon, the planner's reasoning module, the case log (for surgeon UI), and the audit log use. The two-layer tag is how surgeons interact in language while the gate still gets a deterministic constraint kind to enforce.
 
 Spawn, despawn, contact, and tag changes are first-class events.
 
 **Why one-way:**
-- Every other component (perception writes to slots, world model reads from them, planner reasons over them, safety filter checks them) depends on this representation. Changing it later requires touching every layer.
-- The embedding-first vs. typed-first distinction in particular cascades: an embedding-conditioned world model is a fundamentally different module from N per-type dynamics modules; affordance-based skill matching is a different control flow from type-matching; embedding-keyed episodic retrieval is a different schema from type-keyed retrieval. Switching directions later means rewriting all of these.
+- Every other component (perception writes to slots, world model reads from them, planner reasons over them, safety evaluator consumes them) depends on this representation. Changing it later requires touching every layer.
+- The embedding-first vs. typed-first distinction in particular cascades: an embedding-conditioned world model is a fundamentally different module from N per-type dynamics modules; affordance-based skill matching is a different control flow from type-matching; embedding-keyed **case indexing** (case log, training curation — not substrate conditioning at inference) is a different schema from type-keyed lookup. Switching directions later means rewriting all of these.
 
 ### 3.2 Multi-loop, multi-timescale control
 
-Three control loops run at different rates against shared scene state, plus a parallel asynchronous risk system:
+Three control loops run at different rates against shared entity/scene state, plus the **safety evaluator** (§5.10): **async safety assessment** (~10–20 Hz) publishes a SafetySurface and modulation-related signals; the **sync command gate** (100–500 Hz) checks every command. Former standalone **risk system** capabilities live inside async assessment (§5.8).
 
-| Loop | Rate | Role |
+| Loop / path | Rate | Role |
 |---|---|---|
-| Slow planner | ~0.5–2 Hz | Directive composition, deliberative reasoning, escalation |
+| Slow planner | ~0.5–2 Hz | Directive composition, deliberative reasoning, memory consolidation, escalation; reads SafetySurface |
 | Substrate runtime | ~5–20 Hz | Substrate forward pass + contract / OOD monitoring + re-conditioning |
 | Fast controller | ~100–500 Hz | MPC + visual servoing + force-aware control |
-| Risk system | asynchronous | Uncertainty + risk + direct safety override + modulation feedback |
+| Safety evaluator | async ~10–20 Hz + sync 100–500 Hz | SafetySurface from entity state; pass/project/veto on every command; Layer 1 invariants; absorbs former risk monitoring (§5.8, §5.10) |
 
 **Why one-way:** A single-loop architecture cannot meet both the latency requirements of fine motor control and the deliberation requirements of directive selection. Retrofitting multi-loop into a single-loop design requires rewriting the controller and planner.
 
@@ -261,7 +275,7 @@ The action source is a single compositional policy substrate — a learned neura
 
 **Directives are drawn from a continuous distribution, not an enumerated vocabulary.** The substrate is trained on a continuous distribution of natural-language directives. There is no fixed list of supported directives — the substrate's *reliability frontier* (the region of language space where its behavior is reliable, measured by per-directive evaluation suites and OOD detection) defines what's currently supported. Phases (§10) expand this frontier; they do not extend a registry.
 
-**Safety boundary survives.** The safety filter still sits between every commanded action and the robot. It is unchanged from v0.2: explicit, formally specified, deterministic, operating on interpretable scene state. Whether a command came from a "clean skill execution" or from a novel substrate composition is invisible to it. The substrate is the action source; the safety filter is the action gate; they are decoupled.
+**Safety boundary survives.** The **sync command gate** still sits between every commanded action and the robot: fail-closed, substrate-output-agnostic, immediate surgeon override. v0.8 adds **async assessment** that reads entity state and publishes a **SafetySurface** the gate enforces (heavy reasoning off the hot path). The gate’s logic stays small and verifiable; the SafetySurface is calibrated and phase-evaluated (§5.10). Whether a command came from teleoperation, the planner, or the substrate is invisible to the gate. The substrate is the action source; the safety evaluator is the action gate; training and dedication stay separate from policy optimization.
 
 **Why one-way:**
 - The substrate's training data, conditioning interfaces, and architecture are all designed around this commitment. Reverting to a discrete skill library means splitting the substrate into N individually-trained policies, throwing away the compositional generalization that motivated this choice in the first place.
@@ -270,7 +284,7 @@ The action source is a single compositional policy substrate — a learned neura
 
 ### 3.4 Sim and real implement the same `Environment` interface
 
-The simulator and the real robot expose the same observation space, action space, scene-graph schema, directive vocabulary, and contract schema. Code above the `Environment` boundary runs unchanged on both.
+The simulator and the real robot expose the same observation space, action space, entity-knowledge-store / slot schema, directive distribution, and contract schema. Code above the `Environment` boundary runs unchanged on both.
 
 **Why one-way:** Without this parity, every component is implemented twice (once for sim, once for real) and drifts. Sim becomes useless for development.
 
@@ -296,8 +310,8 @@ The system distinguishes safety reasoning (dedicated, interpretable, conservativ
 |---|---|---|
 | Slot properties | embedding, affordance space, type distribution, dynamics adapter, learned uncertainty | surgeon tags (constraint type + content), surgeon labels |
 | Behavior contract slots | success criteria, quality measures, surgeon-stated intent | safety invariants, abort conditions, force/velocity envelopes, forbidden constraint-type tags |
-| Risk inputs | substrate confidence, OOD scores, risk-system per-slot scores | surgeon override, hard-veto path |
-| Safety filter consumption | **never** | **only** |
+| Risk inputs | substrate confidence, OOD scores, async-assessment per-slot scores (SafetySurface) | surgeon override, hard-veto path |
+| Safety evaluator | Learned entity state informs **async assessment** (SafetySurface); may **tighten** or **veto**; must **not relax** hard commitments or substitute policy optimization for safety training | **Sync gate** enforces deterministic constraint kinds, SafetySurface geometry/envelopes, contract hard slots, Layer 1 |
 
 **Soft priors** (embeddings, affordance vectors, type estimates, substrate confidence, OOD scores, learned risk scores) inform planner reasoning, modulation, substrate conditioning, and contract monitoring. They can flow through the safety evaluator to *raise* caution or trigger veto, but they cannot *relax* the safety evaluator's assessment.
 
@@ -312,12 +326,14 @@ The system distinguishes safety reasoning (dedicated, interpretable, conservativ
 ```
                    SURGEON INTERFACE (goal / permission / override)
                                   │
-                                  ▼
-                   ┌──────────────────────────────────┐
+                    SafetySurface │
+                   (interpretable)│
+                          ▲       │
+                          │       ▼
+                   ┌──────┴───────────────────────────┐
                    │   SLOW PLANNER  (~0.5–2 Hz)       │
-                   │   Reasoning + conditioning bundle │
-                   │   (language directive, contract,  │
-                   │    modulation, retrieved cases)   │
+                   │   directive, contract, modulation │
+                   │   (+ reads SafetySurface)         │
                    └──────────────┬───────────────────┘
                                   │ conditioning bundle
                                   ▼
@@ -332,13 +348,15 @@ The system distinguishes safety reasoning (dedicated, interpretable, conservativ
                    │   FAST CONTROLLER  (~100–500 Hz)  │
                    │   MPC + visual servo + force      │
                    └──────────────┬───────────────────┘
-                                  │
+                                  │ RobotCommand
                                   ▼
                    ┌──────────────────────────────────┐
-                   │   SAFETY FILTER  (verified)       │◄── RISK SYSTEM
-                   │   CBF + no-go + envelope checks   │    (async, modulates
-                   │   substrate-output-agnostic       │    substrate +
-                   └──────────────┬───────────────────┘    can veto)
+                   │   SAFETY EVALUATOR (v0.8)         │
+                   │   Async assessment (~10–20 Hz):   │
+                   │     entity state → SafetySurface  │
+                   │   Sync command gate (100–500 Hz): │
+                   │     surface + Layer 1 invariants  │
+                   └──────────────┬───────────────────┘
                                   │
                                   ▼
                               ┌────────┐
@@ -354,7 +372,8 @@ The system distinguishes safety reasoning (dedicated, interpretable, conservativ
                                   │
                                   ▼
                    ┌──────────────────────────────────┐
-                   │   SCENE STATE  (embedding-first slots) │
+                   │ ENTITY KNOWLEDGE STORE            │
+                   │ (embedding-first slots)           │
                    └──────────────┬───────────────────┘
                                   │
                                   ▼
@@ -362,9 +381,12 @@ The system distinguishes safety reasoning (dedicated, interpretable, conservativ
                    │   WORLD MODEL  (embedding-conditioned)│
                    └──────────────────────────────────┘
 
-Scene state is read by all loops. World model is read by planner,
-controller, and risk system. Safety filter sits between every
-commanded action and the robot.
+Entity knowledge store is read by planner, substrate runtime, world model,
+and safety evaluator async assessment. World model is read by planner
+and feeds consolidation and SafetySurface context. Every commanded
+action passes through the sync command gate; surgeon override is
+unconditional. (Inference-time RAG / retrieved cases are not in the
+runtime bundle; case log is operational only — §8.)
 ```
 
 ---
@@ -400,13 +422,13 @@ Two parallel encoders feeding a unified slot-attention head.
 
 **Relationship to soft tissue.** SE(3) layers encode **rigid-frame** geometry: tool pose, contact frames, and spatial relations transform consistently under global rotation and translation. They do **not** replace a constitutive model of deformable tissue, plastic damage, topology change, or bleeding. Those behaviors are predicted by the embedding-conditioned world model (§5.4), which fuses these geometric features with stereo shape and motion, force/torque, and contact history. Axial tool roll is in SE(3) when kinematics or asymmetric appearance makes it observable; symmetric appearance alone can leave roll weakly determined from vision — kinematics and wrench then carry the signal.
 
-**Latency budget:** ≤15 ms p99 from frame ingestion to scene-graph update.
+**Latency budget:** ≤15 ms p99 from frame ingestion to entity-knowledge-store / slot update.
 
 **Status:** Off-the-shelf + integration. Streaming adaptation is modest research.
 
 #### 5.2.2 Semantic stream encoder
 
-**Purpose:** Slower, higher-resolution semantic perception for the slow planner and risk system.
+**Purpose:** Slower, higher-resolution semantic perception for the slow planner and safety evaluator async assessment (context for SafetySurface; §5.10).
 
 **Inputs:** stereo microscope frames.
 
@@ -420,15 +442,15 @@ Two parallel encoders feeding a unified slot-attention head.
 
 #### 5.2.3 Slot Attention head
 
-**Purpose:** Integrate dual-stream output into object slots in the scene graph. Maintains slot identity across frames and emits spawn/despawn events.
+**Purpose:** Integrate dual-stream output into object **slots** (slot-level scene state inside the **entity knowledge store**, §5.2). Maintains slot identity across frames and emits spawn/despawn events.
 
 **Inputs:** action stream features, semantic stream features.
 
-**Outputs:** scene graph updates — slot creation, slot pose/geometry updates, slot deletion. Each new or updated slot is annotated with an embedding (produced by the joint embedding head, §5.2.4) and pose/geometry from the action stream.
+**Outputs:** **Scene state** updates — slot creation, slot pose/geometry updates, slot deletion. Each new or updated slot is annotated with an embedding (produced by the joint embedding head, §5.2.4) and pose/geometry from the action stream.
 
 **Architecture:** Variable-cardinality slot attention. Each slot is tracked over time; identity is maintained across occlusion via temporal continuity in the embedding space and pose history.
 
-**Physically overlapping entities must remain separate slots.** A vein draped over a tumor occupies overlapping space and is mechanically coupled to it, but the two have different dynamics (pressurized vessel vs. bulk tissue), different affordances (preserve vs. resect), different risk profiles (catastrophic hemorrhage vs. margin management), and different surgeon constraints (hard no-go vs. active removal target). Merging them would prevent the system from expressing "remove this, preserve that." The per-slot decomposition gives the planner, safety filter, and surgeon UI separate handles; the relationship between co-located entities is captured in the right places: interaction coupling in the world model (§5.4), spatial structure in SE(3)-equivariant features (§5.2.1), and strategic reasoning in the planner (§5.5). The dual-stream fusion is critical here — the semantic stream (SAM 2 / MedSAM2) provides the fine-grained anatomical segmentation needed to distinguish a vessel from underlying tissue when the action stream's geometry alone cannot separate them.
+**Physically overlapping entities must remain separate slots.** A vein draped over a tumor occupies overlapping space and is mechanically coupled to it, but the two have different dynamics (pressurized vessel vs. bulk tissue), different affordances (preserve vs. resect), different risk profiles (catastrophic hemorrhage vs. margin management), and different surgeon constraints (hard no-go vs. active removal target). Merging them would prevent the system from expressing "remove this, preserve that." The per-slot decomposition gives the planner, safety evaluator, and surgeon UI separate handles; the relationship between co-located entities is captured in the right places: interaction coupling in the world model (§5.4), spatial structure in SE(3)-equivariant features (§5.2.1), and strategic reasoning in the planner (§5.5). The dual-stream fusion is critical here — the semantic stream (SAM 2 / MedSAM2) provides the fine-grained anatomical segmentation needed to distinguish a vessel from underlying tissue when the action stream's geometry alone cannot separate them.
 
 **Entity splitting is a known failure mode.** The competitive softmax in slot attention encourages each perceptual feature to be predominantly explained by one slot, but does not strictly enforce one-to-one entity-to-slot mapping. A large or heterogeneous entity (multi-lobed tumor, long vessel) could have different spatial regions claimed by different slots if those regions look sufficiently different in feature space. Mitigations: persistent identity tracking makes sporadic splits unstable across frames; entity-level training supervision penalizes gratuitous splitting; the planner would observe two slots with near-identical embeddings and overlapping spatial extent. Risk factors remain: genuinely ambiguous boundaries (partially resected tissue), under-training, distribution shift. Custom streaming adaptations should include explicit merge/split detection — slot-merging heuristics or a learned merge/split head after the binding pass.
 
@@ -444,10 +466,10 @@ Two parallel encoders feeding a unified slot-attention head.
 
 **Outputs:** for each slot, an embedding vector `e_slot ∈ R^d` (initial `d ≈ 512`) plus per-dimension uncertainty.
 
-**Architecture:** A multi-modal encoder trained with contrastive objectives (CLIP-style) across pairs of (visual feature, geometric feature, kinematic trace, force trace, surgeon language). The same encoder produces embeddings for slots, for retrieval queries, and for skill-required-affordance matching, ensuring all live in the same space.
+**Architecture:** A multi-modal encoder trained with contrastive objectives (CLIP-style) across pairs of (visual feature, geometric feature, kinematic trace, force trace, surgeon language). The same encoder produces embeddings for slots, for **case-log / curation similarity queries** (ops and training pipeline — not substrate conditioning at inference), and for skill-required-affordance matching, ensuring all live in the same space.
 
 **Derived heads (small networks on top of the embedding):**
-- *Type classifier head:* outputs a confidence distribution over the open type hierarchy. Used for surgeon communication, debugging, and prior selection. Not used by the safety filter for hard constraints.
+- *Type classifier head:* outputs a confidence distribution over the open type hierarchy. Used for surgeon communication, debugging, and prior selection. Not used by the sync command gate for hard constraint types (surgeon tags / contract hard slots are authoritative; §5.10).
 - *Affordance space projection:* projects the slot embedding into a learned affordance subspace `R^d_aff`. This is the *primary* affordance representation — a continuous vector capturing functional properties. Trained jointly with the rest of the embedding through contrastive objectives that group functionally-similar slots and through supervised signals from labeled affordance examples.
 - *Named affordance readout heads:* one classifier per *labeled region* of the affordance subspace (`graspable_along_axis`, `has_cutting_edge`, `is_rigid`, `absorbs_fluid`, `is_vessel_like`, ...). Each outputs a confidence by measuring proximity of the slot's affordance vector to a learned anchor for that region. New named affordances can be added by labeling a few examples and training a new readout head — the affordance subspace itself doesn't change. Behavior contracts can also reference *unnamed neighborhoods* in affordance space directly (e.g., "any slot whose affordance vector is within 0.3 of canonical_aspirator_target") for cases where no named predicate suffices.
 - *Per-slot dynamics adapter:* a small parameter set (or hypernetwork-conditioned weights) initialized from the embedding's nearest neighbors and refined online from observed interactions. Cerebellar analog.
@@ -508,12 +530,12 @@ class SurgeonTag:
     created_by: SurgeonId
 ```
 
-Only `constraint_type`, `constraint_params`, and `anchored_to` are consumed by the safety filter. `natural_language_content` is preserved for surgeon communication, case-log retrieval (surgeon UI, audit, training-data curation), and audit. `surgeon_confirmed` must be `True` before the tag becomes hard-constraint-active; until then the constraint is provisional and triggers an escalation if violated.
+Only `constraint_type`, `constraint_params`, and `anchored_to` are consumed by the safety evaluator’s sync gate (with SafetySurface; §5.10). `natural_language_content` is preserved for surgeon communication, case-log retrieval (surgeon UI, audit, training-data curation), and audit. `surgeon_confirmed` must be `True` before the tag becomes hard-constraint-active; until then the constraint is provisional and triggers an escalation if violated.
 
 **Layer roles:**
 - *Primary* is the source of truth. Perception writes here. The embedding captures everything the system has learned about this slot's perceptual and functional identity.
 - *Derived* is recomputed from primary + observation. Type confidences, affordance vectors, and named affordance readouts drive substrate conditioning and provide priors to the world model. None of this is used for hard guarantees.
-- *Explicit* is set by the surgeon (or by pre-op planning). Hard safety constraints reference the deterministic part of explicit tags (constraint type + params + slot anchor). The safety filter never consults the derived layer or the natural-language content.
+- *Explicit* is set by the surgeon (or by pre-op planning). Hard safety constraints reference the deterministic part of explicit tags (constraint type + params + slot anchor). The sync command gate does not use the derived layer or free-form natural-language content as a substitute for those deterministic fields.
 
 **Type hierarchy.** `TypePath` is an open hierarchical path through an extensible ontology (e.g., `"Tool/Cutting/Scissors/Mayo"`). The ontology can grow at runtime: a slot whose embedding doesn't match any leaf is assigned a fresh `Unknown_*` leaf, which surgeon registration or accumulated observation can later refine. Multiple paths can have non-zero confidence simultaneously.
 
@@ -524,14 +546,16 @@ Only `constraint_type`, `constraint_params`, and `anchored_to` are consumed by t
 
 **Dynamics adapter.** A small per-slot parameter set (or hypernetwork-conditioned weights) that adapts the world model's predictions for *this specific slot*. Initialized from the embedding's nearest neighbors in the training set; refined online from observed interactions.
 
-**Surgeon tags (v0.4).** Two-layer (see `SurgeonTag` schema above). The *constraint type* is from a closed, formally specified enum the safety filter knows how to enforce. The *natural-language content* is the surgeon's free-form description, used for surgeon communication, case-log retrieval (surgeon UI, audit, training-data curation), and audit but never by the safety filter. The two layers are bound together in a single tag, anchored to a specific slot, with surgeon visual confirmation gating the tag's activation as a hard constraint.
+**Surgeon tags (v0.4).** Two-layer (see `SurgeonTag` schema above). The *constraint type* is from a closed, formally specified enum the sync command gate enforces (with SafetySurface; §5.10). The *natural-language content* is the surgeon's free-form description, used for surgeon communication and case-log retrieval (surgeon UI, audit, training-data curation) but not in place of the deterministic constraint fields at the gate. The two layers are bound together in a single tag, anchored to a specific slot, with surgeon visual confirmation gating the tag's activation as a hard constraint.
 
 Examples:
 - `SurgeonTag(constraint_type=NO_GO_REGION, constraint_params={"margin_mm": 2.0}, natural_language_content="the proximal segment of vessel_018, the bigger branch", anchored_to=vessel_018)`
 - `SurgeonTag(constraint_type=DO_NOT_ACTION, constraint_params={"action_class": "aspirate"}, natural_language_content="fragile-looking tissue near the anterior margin", anchored_to=tissue_034)`
 - `SurgeonTag(constraint_type=FORCE_LIMIT, constraint_params={"max_force_N": 0.15}, natural_language_content="the granulation tissue", anchored_to=tissue_022)`
 
-#### 5.3.2 Scene graph
+#### 5.3.2 Scene state (`SceneGraph`)
+
+Slot-level blackboard inside the **entity knowledge store** (§5.2). The `SceneGraph` type name is historical; it denotes embedding-first **slots**, contact topology, and events — not the pre–v0.7 snapshot-only structure.
 
 ```python
 class SceneGraph:
@@ -581,9 +605,9 @@ Internally it composes:
 - A **learned residual** conditioned on the embedding and the dynamics adapter, capturing instance-specific behavior the prior misses (compliance, friability, saturation rate, individual anatomy).
 - A **contact / interaction term** that takes pairs of slot embeddings and predicts contact forces and resulting state changes.
 
-**Multimodal fusion for deformable dynamics.** Learned “elasticity,” compliance, and interaction coupling are inferred by **relating** SE(3)-structured action geometry to stereo-evolved surface state, applied wrenches, and temporal history — not by SE(3) equivariance alone. The result is a **predictive** model (residual over the physics prior) with calibrated uncertainty on its readouts; it is **not** a formal guarantee that the patient matches a particular material law. Hard safety remains surgeon-tagged constraints and the safety filter (§3.5, §5.10).
+**Multimodal fusion for deformable dynamics.** Learned “elasticity,” compliance, and interaction coupling are inferred by **relating** SE(3)-structured action geometry to stereo-evolved surface state, applied wrenches, and temporal history — not by SE(3) equivariance alone. The result is a **predictive** model (residual over the physics prior) with calibrated uncertainty on its readouts; it is **not** a formal guarantee that the patient matches a particular material law. Hard safety remains surgeon-tagged constraints and the safety evaluator (§3.5, §5.10).
 
-**Scene-integrated dynamics.** Conditioning on slot embeddings **and** the scene graph (poses, contact topology, events) lets a single dynamics pass couple many slots. The joint embedding objective is intended so that **geometrically or anatomically neighboring regions** often lie in **nearby regions of embedding space**; then interaction history on one tissue slot acts as a **prior** for dynamics on adjacent slots, and **bleed / fluid risk** can propagate through coupled predictions and interaction terms—informing planner rollouts and risk readouts. This is an **empirical** property to measure (embedding neighborhood vs. spatial adjacency, transfer after local contact), not a theorem guaranteed by the architecture alone.
+**Scene-integrated dynamics.** Conditioning on slot embeddings **and** **scene state** (slot poses, contact topology, events from §5.3) lets a single dynamics pass couple many slots. The joint embedding objective is intended so that **geometrically or anatomically neighboring regions** often lie in **nearby regions of embedding space**; then interaction history on one tissue slot acts as a **prior** for dynamics on adjacent slots, and **bleed / fluid risk** can propagate through coupled predictions and interaction terms—informing planner rollouts and risk readouts. This is an **empirical** property to measure (embedding neighborhood vs. spatial adjacency, transfer after local contact), not a theorem guaranteed by the architecture alone.
 
 **Why embedding-conditioned (vs. per-type modules).** Per-type modules:
 - Force a closed type system that doesn't generalize across similar types or to novel ones.
@@ -637,7 +661,7 @@ class WorldModel:
 #### 5.4.3 Two output channels
 
 - **Latent rollout** for the planner: compact `z_t ∈ R^d` representation with fast multi-step predictions. Used inside MPC/MCTS rollouts.
-- **Interpretable readouts** for the safety filter and risk system: predicted poses, predicted forces, anatomy SDFs, no-go region distances — all with calibrated uncertainty.
+- **Interpretable readouts** for the safety evaluator (SafetySurface) and planner: predicted poses, predicted forces, anatomy SDFs, no-go region distances — all with calibrated uncertainty.
 
 #### 5.4.4 Performance contract
 
@@ -702,8 +726,9 @@ class PlannerOutput:
 ```python
 class BehaviorContract:
     # ── HARD slots (deterministic, formally verifiable, safety-critical) ──
-    # Consumed by the safety filter for envelope parameterization and by the
-    # substrate runtime for hard-constraint checks. Verifiable.
+    # Consumed by the sync command gate / SafetySurface for envelope
+    # parameterization and by the substrate runtime for hard-constraint checks.
+    # Verifiable.
     safety_invariants: list[FormalPredicate]      # over interpretable scene state
     abort_conditions: list[FormalPredicate]
     force_envelope: ForceEnvelope                  # max force, max velocity, contact rules
@@ -726,7 +751,7 @@ class BehaviorContract:
     contract_version: str                          # for audit / replay
 ```
 
-The hard slots feed the safety filter's envelope selection and the runtime's deterministic monitoring (§5.10). The soft slots feed the substrate as part of its conditioning bundle and the runtime's learned-head monitoring (§5.6.3). The two are evaluated separately: a contract violation in a hard slot is unconditional; a contract drift in a soft slot raises a soft-status flag that the planner can consider.
+The hard slots feed the safety evaluator's envelope selection (SafetySurface + sync gate) and the runtime's deterministic monitoring (§5.10). The soft slots feed the substrate as part of its conditioning bundle and the runtime's learned-head monitoring (§5.6.3). The two are evaluated separately: a contract violation in a hard slot is unconditional; a contract drift in a soft slot raises a soft-status flag that the planner can consider.
 
 This mixed schema captures what surgeons actually want — "remove the tumor mostly, with this hard force limit and these absolute no-gos" — without forcing soft success criteria into formal predicates that they don't naturally fit, and without letting fuzzy success criteria contaminate the safety surface.
 
@@ -756,6 +781,9 @@ Run the compositional policy substrate against the current context bundle, monit
 ```python
 class PolicySubstrateRuntime:
     substrate: PolicySubstrate          # the learned compositional policy network
+
+    # `risk` / RiskState in signatures below is the modulation-facing snapshot
+    # produced by async safety assessment (former standalone risk system; §5.8, §5.10).
 
     def receive_conditioning(
         self,
@@ -790,7 +818,7 @@ class PolicySubstrateRuntime:
         ...
 
 class RuntimeStepResult:
-    commanded_action: Action               # to fast controller / safety filter
+    commanded_action: Action               # to fast controller, then sync command gate (§5.10)
     contract_status: ContractStatus        # SATISFIED / IN_PROGRESS / DRIFTING / VIOLATED
     substrate_confidence: float            # the substrate's own confidence
     out_of_distribution_score: float       # from embedding-distance to training set
@@ -812,7 +840,7 @@ Because there is no per-skill code with explicit pre/post-conditions, contract m
 4. Check that no **forbidden constraint-type tags** are entered. Violation = contract violation.
 5. Verify the active **force envelope** has not been narrowed by scene changes (e.g., approaching a flagged region triggers a tighter envelope).
 
-Hard-slot violations are unconditional and route to the safety filter and planner immediately.
+Hard-slot violations are unconditional and route to the safety evaluator / planner immediately.
 
 **Soft-slot monitoring (probabilistic, evaluated via learned heads):**
 1. **Quality measures** are evaluated by their learned heads each tick; outputs are scalar quality scores tracked over time.
@@ -839,7 +867,7 @@ Either status can trigger escalation, conservative modulation, or hand-off depen
 The runtime does *not* terminate execution to receive new conditioning. The planner can update directive, contract, or modulation at any time, and the substrate's conditioning is updated on the next step without losing internal state. Worked example:
 
 1. Active directive: "aspirate tissue at slot tissue_007." Substrate is mid-aspiration.
-2. Risk system fires bleed event from a different slot (vessel_018). Modulation channel updates: `caution_level: 0.3 → 0.8`, `attention_targets += [vessel_018]`.
+2. Async safety assessment detects a bleed event from a different slot (vessel_018) and updates SafetySurface / risk-modulation inputs. System attention updates: `caution_level: 0.3 → 0.8`, `attention_targets += [vessel_018]`.
 3. Planner does *not* issue a new directive. It just calls `reparameterize(new_modulation=...)`.
 4. On the next runtime step, the substrate's conditioning bundle includes the new modulation. Its output composes the still-active aspiration directive with the heightened caution + attention. The substrate may slow down, widen safety margins, and bias trajectory away from vessel_018, all without the runtime restarting any state machine.
 5. If the surgeon then says "stop and address the bleed," the planner issues `reparameterize(new_directive="stop aspirating; cauterize vessel_018", new_contract=...)`. Substrate transitions to the new directive smoothly, leveraging its hidden state (it remembers what was happening) and the language-level transition.
@@ -902,11 +930,11 @@ class FastController:
 
 Off-the-shelf. MPC formulations and visual servoing are mature.
 
-### 5.8 Risk system
+### 5.8 Risk system (absorbed; see §5.10)
 
 #### 5.8.1 Purpose
 
-**This section describes the risk system's absorption into the safety evaluator's async assessment phase (§5.10).** The risk system as a separate component no longer exists in v0.8. Its capabilities — conformal prediction, per-entity risk scoring, escalation triggers, direct override — are now the foundation of the async safety assessment phase.
+**This section describes the former risk system's absorption into the safety evaluator's async assessment phase (§5.10).** A standalone risk-system component no longer exists in v0.8. Its capabilities — conformal prediction, per-entity risk scoring, escalation triggers, direct override — are now the foundation of the async safety assessment phase.
 
 For detailed design of these capabilities' new home, see §5.10 (Safety evaluator).
 
@@ -932,7 +960,7 @@ Conformal prediction: off-the-shelf for static prediction; real-time/streaming v
 
 #### 5.9.1 Purpose
 
-Coordinate four independent modulation signals (planner modulation, voluntary attention, risk override, adaptive halting) into a single unified per-tick modulation state consumed by all control and perception components. This eliminates signal inconsistency and provides a single inspection surface for understanding system behavior at any moment.
+Coordinate four independent modulation signals (planner modulation, voluntary attention, **async-assessment** risk override, adaptive halting) into a single unified per-tick modulation state consumed by all control and perception components. *Risk* signals are produced by the **async safety assessment** phase of the safety evaluator (§5.8, §5.10), not by a separate risk-system component. This eliminates signal inconsistency and provides a single inspection surface.
 
 #### 5.9.2 Components
 
@@ -954,7 +982,7 @@ class SystemAttentionState:
     
     # Escalation event (if triggered)
     escalation: Optional[EscalationEvent]    # aggregates risk escalation, contract violation, OOD detection
-    escalation_source: Optional[str]         # "risk_system" | "contract_violation" | "ood_detection" | None
+    escalation_source: Optional[str]         # "async_safety" | "contract_violation" | "ood_detection" | None
     
     # Metadata for debugging
     tick_id: int                             # for audit trail
@@ -977,7 +1005,7 @@ class SystemAttentionState:
 
 **Caution level:** `max(planner_modulation.caution_level, risk_state.caution_level)`. Fail-closed: if either source raises caution, the higher value is used. This ensures risk overrides cannot be undermined by planner optimism.
 
-**Attention targets:** Union of `planner_modulation.attention_targets` and `risk_state.flagged_slots`. If both planner and risk system flag a slot, it remains in the merged set.
+**Attention targets:** Union of `planner_modulation.attention_targets` and `risk_state.flagged_slots`. If both planner and async assessment flag a slot, it remains in the merged set.
 
 **Time pressure:** Set by planner, but modulated down (clamped toward 0.0) if `risk_state.escalation_imminent == True`. This implements "slow down if risk is near threshold" without explicit planner intervention.
 
@@ -990,7 +1018,7 @@ class SystemAttentionState:
 Halting priority is checked by the slow planner; if True, the planner may trigger adaptive halting of the policy substrate runtime and re-step the reasoning module.
 
 **Escalation aggregation:** If any of the following is true, populate `escalation` and route to the planner immediately:
-- `risk_state.escalation != None` → escalation_source = `"risk_system"`.
+- `risk_state.escalation != None` → escalation_source = `"async_safety"` (`RiskState` is published by async assessment; §5.10).
 - `contract_status == VIOLATED` (hard-slot violation) → escalation_source = `"contract_violation"`.
 - `ood_score > hard_ood_threshold` (OOD detection gates autonomy) → escalation_source = `"ood_detection"`.
 
@@ -1015,7 +1043,7 @@ class SystemAttention:
         self.current_state = SystemAttentionState.aggregate(...)
     
     def get_state(self) -> SystemAttentionState:
-        """Called by substrate runtime, fast controller, risk system, perception."""
+        """Called by substrate runtime, fast controller, async safety assessment, perception."""
         return self.current_state
 ```
 
@@ -1025,22 +1053,22 @@ class SystemAttention:
 
 **Usage by action-stream encoder (§5.2.2):** Consumes `attention_targets` to bias compute toward prioritized slots.
 
-**Usage by risk system (§5.8):** Produces input to aggregation but also reads back `current_state.caution_level` to detect if its caution signals are being honored.
+**Usage by async safety assessment (§5.8, §5.10):** Publishes `RiskState` into aggregation; may read back `current_state.caution_level` to verify planner-side honoring of caution (implementation choice).
 
 **Usage by planner (§5.5):** Reads `request_adaptive_halt` and `escalation` to trigger re-deliberation or escalation; produces `planner_modulation` and `attention_targets` that feed into the next aggregation.
 
 #### 5.9.5 Data flow diagram
 
 ```
-┌──────────────────┐    ┌──────────┐    ┌──────────────┐    ┌──────────┐
-│ Slow Planner     │    │ Risk     │    │ Substrate    │    │ Adaptive │
-│ (PlannerModulation)    │ System   │    │ Runtime      │    │ Halt     │
-└────────┬─────────┘    │ (RiskState)   │ (Contract)   │    │ Flags    │
-         │              └────┬─────┘    └────┬─────────┘    └────┬─────┘
-         │                   │              │                    │
-         └───────────────────┼──────────────┼────────────────────┘
-                             │
-                             v
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────┐    ┌──────────┐
+│ Slow Planner     │    │ Async safety     │    │ Substrate    │    │ Adaptive │
+│ (PlannerModulation)   │ (RiskState)      │    │ Runtime      │    │ Halt     │
+└────────┬─────────┘    └────────┬─────────┘    │ (Contract)   │    │ Flags    │
+         │                      │            └────┬─────────┘    └────┬─────┘
+         │                      │                 │                    │
+         └──────────────────────┼─────────────────┼────────────────────┘
+                                │
+                                v
                   ┌──────────────────────┐
                   │ SystemAttention      │
                   │ .aggregate()         │
@@ -1057,9 +1085,9 @@ class SystemAttention:
          │                   │                    │                 │
          v                   v                    v                 v
    ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-   │Substrate     │   │Fast          │   │Action-Stream │   │Risk System   │
-   │Runtime       │   │Controller    │   │Encoder       │   │(feedback)    │
-   │ (modulation) │   │ (gains)      │   │ (compute)    │   │ (validation) │
+   │Substrate     │   │Fast          │   │Action-Stream │   │Async safety   │
+   │Runtime       │   │Controller    │   │Encoder       │   │assessment     │
+   │ (modulation) │   │ (gains)      │   │ (compute)    │   │(RiskState out)│
    └──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘
 ```
 
@@ -1098,7 +1126,7 @@ Checked by Phase 2 (sync command gate) alongside the safety surface.
 
 **Layer 2, Phase 1: Async safety assessment (~10-20 Hz)**
 
-This is the "thinking" part. Absorbs current risk system capabilities and extends them with entity-informed reasoning:
+This is the "thinking" part. Absorbs former standalone risk-system capabilities (now baseline async assessment) and extends them with entity-informed reasoning:
 
 Reads: entity embeddings, interaction digests, world model deformations, surgeon tags. 
 Computes: deformation-compensated no-go geometry, context-aware force envelopes, per-entity cumulative risk scores, anomaly flags.
@@ -1115,10 +1143,15 @@ Checks: each command against deformation-compensated no-go SDFs, force/velocity 
 Decides: pass / project / veto.
 No heavy inference per tick — just geometric/envelope checks against pre-computed surfaces.
 
-Properties: fail-closed default, checks every command regardless of source, immediate surgeon override.
+**Output:** Each command yields a **`SafetyDecision`** (logged as `safety_decision` in §8.1.2; see glossary **Sync command gate**). Fail-closed defaults, substrate-output-agnostic checks, and immediate surgeon override apply regardless of outcome shape.
+
+```python
+@dataclass
+class SafetyDecision:
+    """Outcome of the sync command gate for one command."""
     action: Literal["pass", "project", "veto"]
-    modified_command: Optional[RobotCommand]   # if "project"
-    veto_reason: Optional[str]                  # if "veto"
+    modified_command: Optional[RobotCommand]  # if "project"
+    veto_reason: Optional[str]  # if "veto"
 ```
 
 #### 5.10.3 Constraint set and verification
@@ -1165,12 +1198,12 @@ Bridge between the safety evaluator and the neuroArm hardware control layer.
 
 #### 5.11.2 Modes
 
-- **Teleop pass-through.** Surgeon commands flow through the safety filter and reach the robot. Autonomous components are disabled or in observe-only mode.
+- **Teleop pass-through.** Surgeon commands flow through the **sync command gate** (safety evaluator) and reach the robot. Autonomous components are disabled or in observe-only mode.
 - **Assistive.** Surgeon commands are augmented (virtual fixtures, force scaling, no-go warnings) but the surgeon still drives.
 - **Autonomous narrow.** Single skill or skill sequence runs autonomously under surgeon supervision; abort-on-anything.
 - **Autonomous procedural.** Multi-skill autonomous operation with surgeon as supervisor.
 
-The mode is part of the scene state; the safety filter's constraint set varies by mode.
+The mode is part of the scene state; the safety evaluator's active constraint set varies by mode.
 
 ---
 
@@ -1291,7 +1324,7 @@ Without a discrete skill library, evaluation is behavioral and contract-based:
 
 - For each named directive type (e.g., `Aspirate`, `Cauterize`, `Suture`) define an evaluation suite of scenarios in the simulator.
 - Run the substrate on each scenario, conditioned on the directive and a representative contract.
-- Measure: contract post-condition satisfaction rate, safety invariant violation rate (caught by safety filter, no invariant should ever be actually breached), substrate confidence calibration, time-to-completion, surgeon-rated quality on a held-out scenario subset.
+- Measure: contract post-condition satisfaction rate, safety invariant violation rate (caught by safety evaluator / sync gate, no invariant should ever be actually breached), substrate confidence calibration, time-to-completion, surgeon-rated quality on a held-out scenario subset.
 - Aggregate into a per-directive performance profile. This is what replaces "is this skill working?"
 
 Cross-directive composition is evaluated separately: scenarios that require the substrate to compose multiple directives' patterns (e.g., bleed during suture). These test the substrate's compositional generalization, which is the central architectural claim.
@@ -1311,7 +1344,7 @@ This framing also dictates the dataset shape: instead of curating per-skill demo
 
 #### 6.5.7 Status
 
-**The primary research investment of the entire project.** Estimated multi-year program. Critical risk: if compositional generalization doesn't emerge as expected, the substrate produces brittle behavior that doesn't transfer beyond its narrow training distribution, and the project effectively reverts to per-directive policies that are skills in everything but name. This is a real failure mode and the architecture's mitigations are: (a) the safety filter catches failures regardless of substrate quality; (b) the contract-monitoring runtime escalates when behavior drifts; (c) the OOD detector keeps the substrate operating only within its frontier; (d) phase-by-phase scope expansion limits exposure to substrate failures.
+**The primary research investment of the entire project.** Estimated multi-year program. Critical risk: if compositional generalization doesn't emerge as expected, the substrate produces brittle behavior that doesn't transfer beyond its narrow training distribution, and the project effectively reverts to per-directive policies that are skills in everything but name. This is a real failure mode and the architecture's mitigations are: (a) the **safety evaluator** (sync gate + SafetySurface) catches unsafe commands regardless of substrate quality; (b) the contract-monitoring runtime escalates when behavior drifts; (c) the OOD detector keeps the substrate operating only within its frontier; (d) phase-by-phase scope expansion limits exposure to substrate failures.
 
 This bet is the single biggest reason the spec's goals must be evaluated honestly against the substrate's maturity at each phase.
 
@@ -1331,12 +1364,12 @@ The policy substrate's weights and the joint embedding model's weights. Slow, ge
 
 There is no "rare case influence at inference time" mechanism. Rare or critical cases enter the weights through training; if a case must affect behavior immediately, the surgeon flags it and triggers a fast LoRA fine-tune.
 
-### 7.2 Working memory — substrate recurrent state + scene graph
+### 7.2 Working memory — substrate recurrent state + slot-level scene state
 
 Within-procedure context. Two sub-components, both already specified elsewhere in this document:
 
 - **Substrate recurrent state.** The hybrid SSM-Transformer's hidden state (§6) carries information from the start of a procedure to its current moment. This is what lets the substrate "remember" actions taken minutes earlier. SSMs are particularly suited to this; this is one of their main advantages over pure attention.
-- **Persistent scene graph.** The typed object slots in §5.3 persist across frames and across occlusion, with explicit identities, embeddings, surgeon tags, and history. This is the system's structured short-term memory — the "where is everything, what's its state, what just happened" answer queryable at any time.
+- **Persistent slots (entity knowledge store).** The typed object slots in §5.3 — maintained inside the **entity knowledge store** (§5.2) — persist across frames and across occlusion, with explicit identities, embeddings, surgeon tags, and history. This is the system's structured short-term memory — the "where is everything, what's its state, what just happened" answer queryable at any time.
 
 ### 7.3 What's deliberately *not* here
 
@@ -1448,7 +1481,7 @@ Per-patient anatomy variants generated from preop-MRI distributions. Material pa
 
 | Component | Status | Notes |
 |---|---|---|
-| Object-centric scene graph (with embedding-first slot model) | Engineering | Build from scratch; <3K LOC, critical interface |
+| Entity knowledge store (embedding-first slots; object-centric) | Engineering | Build from scratch; <3K LOC, critical interface |
 | Hybrid SSM-Transformer substrate | Off-the-shelf | Pick a variant; fine-tune |
 | Action stream encoder (equivariant) | Off-the-shelf + integration | Streaming adaptation modest research |
 | Semantic stream encoder (foundation) | Off-the-shelf | SAM 2 / MedSAM2 / surgical VLA fine-tune |
@@ -1467,10 +1500,10 @@ Per-patient anatomy variants generated from preop-MRI distributions. Material pa
 | Fast controller (MPC + visual servo) | Off-the-shelf | Mature techniques |
 | Search-based directive search (MCTS/MPPI/CEM) | Off-the-shelf | AlphaGo-template integration; over directives, not skills |
 | Conformal prediction (calibrated uncertainty) | Off-the-shelf + research | Static: off-the-shelf; streaming/distribution-shift: research |
-| Safety filter (CBF + verified NN sub-checks, hard-only) | Engineering | Mature techniques; explicit-tag-only constraint surface; substrate-output-agnostic |
-| Risk system (combines learned signals → soft override) | Engineering | Composes existing components |
+| Safety evaluator — sync command gate (CBF + verified NN sub-checks, SafetySurface + Layer 1) | Engineering | Mature techniques; entity-informed surface from async assessment; substrate-output-agnostic |
+| Safety evaluator — async assessment (conformal + per-entity risk + escalation) | Engineering + small research | Absorbs former risk system; §5.8, §5.10 |
 | Simulator (SOFA wrapper) | Engineering | Standard work, weeks not months |
-|| System attention coordination (§5.9) | Engineering | Deterministic aggregation logic; single inspection surface for modulation |
+| System attention coordination (§5.9) | Engineering | Deterministic aggregation logic; single inspection surface for modulation |
 | Data pipeline | Engineering | Standard work, must be done early; the moat |
 | Robot interface (neuroArm) | Engineering | Existing teleop layer + safety boundary |
 
@@ -1479,7 +1512,7 @@ Component-level research investments, in priority order:
 1. **Compositional policy substrate (§6.5)** — the action source. Single largest research effort in the project. All autonomous behavior emerges from this. Multi-year, multi-person.
 2. **Joint multi-modal embedding model (§6.4)** — substrate-of-the-substrate. Conditions scene representation, world model, and substrate input. 12–24 month program.
 3. **Unified embedding-conditioned world model** — provides the substrate's training environment and the planner's rollout engine. 18–36 months for soft-tissue + interaction.
-4. **Streaming variable-cardinality Slot Attention** — the gateway between perception and the embedding-first scene graph.
+4. **Streaming variable-cardinality Slot Attention** — the gateway between perception and the embedding-first **slot set** in the entity knowledge store.
 5. **Adaptive recurrent reasoning module at decision points** — the planner's deliberation engine.
 
 Smaller research-active areas:
@@ -1489,7 +1522,7 @@ Smaller research-active areas:
 
 Everything else is engineering of off-the-shelf components.
 
-**Critical risk:** the substrate is the load-bearing research bet. If compositional generalization across directives doesn't emerge reliably from training, the system effectively degrades to per-directive policies that are skills in everything but name — without the verification benefits a discrete skill library would have given. Mitigations: output-level safety filter (catches failures regardless), contract monitoring (escalates on drift), OOD detection (operates only within frontier), phase-by-phase scope (limits exposure). These mitigations make the bet survivable but not free; substrate underperformance directly impacts what phases are achievable when.
+**Critical risk:** the substrate is the load-bearing research bet. If compositional generalization across directives doesn't emerge reliably from training, the system effectively degrades to per-directive policies that are skills in everything but name — without the verification benefits a discrete skill library would have given. Mitigations: output-level **safety evaluator** (catches unsafe commands regardless), contract monitoring (escalates on drift), OOD detection (operates only within frontier), phase-by-phase scope (limits exposure). These mitigations make the bet survivable but not free; substrate underperformance directly impacts what phases are achievable when.
 
 ---
 
@@ -1518,7 +1551,7 @@ The architectural commitments in §3 are sufficient to support all phases withou
 
 **Honest framing of substrate maturity by phase.** Early phases (1–3) have a substrate that is narrow but capable; cross-directive composition is not yet stress-tested because the directive set is small. The middle phases (4–5) introduce soft-body interaction, where the substrate must compose with the world model in ways early phases didn't require. The late phases (6+) require *cross-directive composition under novel conditions* (bleed during suture, etc.) — the central architectural claim of substrate-as-policy. If substrate compositional generalization underperforms there, those phases stretch out.
 
-The mitigations (safety filter, contract monitoring, OOD detection, surgeon override) operate identically across all phases. Failure modes degrade autonomy gracefully — they don't cause unsafe behavior.
+The mitigations (safety evaluator, contract monitoring, OOD detection, surgeon override) operate identically across all phases. Failure modes degrade autonomy gracefully — they don't cause unsafe behavior.
 
 ---
 
@@ -1554,35 +1587,35 @@ Decisions that need to be made but are not yet settled. Each blocks specific dow
 
 14. **Initial named-affordance set.** Which named affordances (readout heads on the affordance subspace) to provide initially. Driven by what surgeons want to use in directives + what the substrate needs as soft conditioning. New named affordances can be added later without re-training the subspace, so this is not a one-way decision.
 
-15. **Constraint-type enum (closed) for surgeon tags.** The closed set of `ConstraintType` values the safety filter knows how to enforce. Initial proposal: `NO_GO_REGION`, `FORCE_LIMIT`, `PROXIMITY_ALERT`, `DO_NOT_ACTION`, `REQUIRED_PROXIMITY`. Adding a new constraint type requires extending the safety filter's verified code; this is rare and deliberate.
+15. **Constraint-type enum (closed) for surgeon tags.** The closed set of `ConstraintType` values the **sync command gate** enforces (with SafetySurface; §5.10). Initial proposal: `NO_GO_REGION`, `FORCE_LIMIT`, `PROXIMITY_ALERT`, `DO_NOT_ACTION`, `REQUIRED_PROXIMITY`. Adding a new constraint type requires extending verified gate code; this is rare and deliberate.
 
 16. **Tag-anchoring interface for surgeons.** How the surgeon associates natural-language content with a slot at runtime — voice + visual confirmation? Touch interface? Eye gaze? Needs surgeon-team input. Decision affects clinical workflow, not architecture.
 
-15. **Embedding-model retraining cadence.** How often to retrain, what triggers a retrain, what the rollout/rollback protocol is. Operationally important; needs definition before Phase 1 ends.
+17. **Embedding-model retraining cadence.** How often to retrain, what triggers a retrain, what the rollout/rollback protocol is. Operationally important; needs definition before Phase 1 ends.
 
-16. **Bootstrap path for the policy substrate.** Which existing VLA or surgical foundation model to fine-tune from for Phase 1, or whether to train from scratch on a small directive set. The choice has multi-month cost implications. Pi-zero / OpenVLA / surgical-VLA candidates. Reversible at Phase boundaries.
+18. **Bootstrap path for the policy substrate.** Which existing VLA or surgical foundation model to fine-tune from for Phase 1, or whether to train from scratch on a small directive set. The choice has multi-month cost implications. Pi-zero / OpenVLA / surgical-VLA candidates. Reversible at Phase boundaries.
 
-17. **Substrate output shape.** Trajectory horizons (50 ms? 500 ms?), action representation (joint vs. Cartesian vs. mixed), inclusion of force profile. Affects fast-controller interface. Decide early; expensive to change after Phase 1.
+19. **Substrate output shape.** Trajectory horizons (50 ms? 500 ms?), action representation (joint vs. Cartesian vs. mixed), inclusion of force profile. Affects fast-controller interface. Decide early; expensive to change after Phase 1.
 
-18. **Behavior contract schema details.** The mixed hard/soft schema is committed (§5.5); the details aren't. Specifically: which formal predicate language for safety_invariants and abort_conditions; how soft success criteria are converted to learned monitor heads; how affordance_requirements compose multiple predicates with logical operators; what counts as a quality_measure. Needs an early decision (before substrate training begins in earnest); a separate `CONTRACT_SCHEMA.md` document is the right shape.
+20. **Behavior contract schema details.** The mixed hard/soft schema is committed (§5.5); the details aren't. Specifically: which formal predicate language for safety_invariants and abort_conditions; how soft success criteria are converted to learned monitor heads; how affordance_requirements compose multiple predicates with logical operators; what counts as a quality_measure. Needs an early decision (before substrate training begins in earnest); a separate `CONTRACT_SCHEMA.md` document is the right shape.
 
-19. **Substrate retraining vs. fine-tuning vs. continual.** When new data arrives, is the substrate fine-tuned, retrained from scratch, or updated continually? Continual learning has known failure modes (catastrophic forgetting). Fine-tuning is safer but slower to incorporate new data. Decision per-phase, with rollback.
+21. **Substrate retraining vs. fine-tuning vs. continual.** When new data arrives, is the substrate fine-tuned, retrained from scratch, or updated continually? Continual learning has known failure modes (catastrophic forgetting). Fine-tuning is safer but slower to incorporate new data. Decision per-phase, with rollback.
 
-20. **Substrate evaluation framework.** Behavioral testing is harder than unit testing. The evaluation suite per directive type needs to be defined: scenarios, contract-satisfaction metrics, surgeon-rated quality, safety-invariant violations, OOD coverage. This is a major engineering effort that pays for itself.
+22. **Substrate evaluation framework.** Behavioral testing is harder than unit testing. The evaluation suite per directive type needs to be defined: scenarios, contract-satisfaction metrics, surgeon-rated quality, safety-invariant violations, OOD coverage. This is a major engineering effort that pays for itself.
 
-21. **Failure-mode taxonomy for the substrate.** What does it mean for the substrate to "fail," operationally? Drift from contract? Low confidence? OOD? Surgeon override? Need a taxonomy so failures can be categorized, logged, and used for training. Defined collaboratively with surgeons.
+23. **Failure-mode taxonomy for the substrate.** What does it mean for the substrate to "fail," operationally? Drift from contract? Low confidence? OOD? Surgeon override? Need a taxonomy so failures can be categorized, logged, and used for training. Defined collaboratively with surgeons.
 
-22. **Surgeon trust-building protocol.** Surgeons will not trust a substrate-driven autonomous system on day one. The progression from observe-only → assistive → narrow-autonomous → broader-autonomous is a trust-building protocol that needs to be designed with surgeon input. Architectural support is mostly already in §5.11 (operational modes) but the protocol itself is open.
+24. **Surgeon trust-building protocol.** Surgeons will not trust a substrate-driven autonomous system on day one. The progression from observe-only → assistive → narrow-autonomous → broader-autonomous is a trust-building protocol that needs to be designed with surgeon input. Architectural support is mostly already in §5.11 (operational modes) but the protocol itself is open.
 
-23. **System attention conflict resolution.** The system attention module (v0.6, §5.9) aggregates four modulation channels (planner, safety evaluator, attention, halting) using deterministic rules (max for caution, union for targets). The current rules are fail-closed and commutative. Should there be a priority ordering among sources, or should conflicts be explicitly routed to the planner for re-deliberation? Current assumption: no priority; the deterministic aggregation is sufficient. Revisit if conflicts cause unexpected behavior in Phase 1.
+25. **System attention conflict resolution.** The system attention module (v0.6, §5.9) aggregates four modulation channels (planner, safety evaluator, attention, halting) using deterministic rules (max for caution, union for targets). The current rules are fail-closed and commutative. Should there be a priority ordering among sources, or should conflicts be explicitly routed to the planner for re-deliberation? Current assumption: no priority; the deterministic aggregation is sufficient. Revisit if conflicts cause unexpected behavior in Phase 1.
 
-24. **Safety assessment calibration protocol (v0.8).** How to evaluate and maintain the calibration of the safety evaluator's async assessment phase per phase transition. Specifically: (1) what constitutes a hard-constraint violation (ground truth), (2) how to measure calibration on held-out test set (target: ≤5% violations), (3) what is the acceptable veto rate on in-distribution commands (<15%), (4) what is the rollback protocol if calibration drifts, (5) how often to re-calibrate using cadaver data, simulation, or logged surgical procedures.
+26. **Safety assessment calibration protocol (v0.8).** How to evaluate and maintain the calibration of the safety evaluator's async assessment phase per phase transition. Specifically: (1) what constitutes a hard-constraint violation (ground truth), (2) how to measure calibration on held-out test set (target: ≤5% violations), (3) what is the acceptable veto rate on in-distribution commands (<15%), (4) what is the rollback protocol if calibration drifts, (5) how often to re-calibrate using cadaver data, simulation, or logged surgical procedures.
 
-25. **Safety head training separation from policy (v0.8).** How to train interpretable safety readout heads on entity embeddings in a way that is provably separate from (and not subserverted by) policy training. Specifically: (1) what are the safety-critical labels we need (tissue damage risk, bleed recurrence risk, cumulative stress)? (2) how do we collect ground-truth labels (cadaver annotations, simulator ground truth, surgeon review)? (3) how to prevent policy loss from influencing safety head training (separate networks, separate data batches, orthogonal gradient projection, or hard separation into two training phases)? (4) how to evaluate that safety heads are learning safety, not task completion.
+27. **Safety head training separation from policy (v0.8).** How to train interpretable safety readout heads on entity embeddings in a way that is provably separate from (and not subserverted by) policy training. Specifically: (1) what are the safety-critical labels we need (tissue damage risk, bleed recurrence risk, cumulative stress)? (2) how do we collect ground-truth labels (cadaver annotations, simulator ground truth, surgeon review)? (3) how to prevent policy loss from influencing safety head training (separate networks, separate data batches, orthogonal gradient projection, or hard separation into two training phases)? (4) how to evaluate that safety heads are learning safety, not task completion.
 
-26. **Safety surface update rate and staleness bounds (v0.8).** The async safety assessment runs at ~10-20 Hz, publishing a safety surface consumed by the sync command gate at 100-500 Hz. Acceptable staleness bounds: how long can the surface be out-of-date before the gate should conservatively veto? Target: surface staleness <100 ms. If surface is stale (>100 ms), gate should (a) veto all commands, (b) use last-known surface with expanded margins, or (c) trigger an immediate re-assessment? Design decision affects safety-liveness tradeoff.
+28. **Safety surface update rate and staleness bounds (v0.8).** The async safety assessment runs at ~10-20 Hz, publishing a safety surface consumed by the sync command gate at 100-500 Hz. Acceptable staleness bounds: how long can the surface be out-of-date before the gate should conservatively veto? Target: surface staleness <100 ms. If surface is stale (>100 ms), gate should (a) veto all commands, (b) use last-known surface with expanded margins, or (c) trigger an immediate re-assessment? Design decision affects safety-liveness tradeoff.
 
-27. **Async/sync boundary: which checks belong in which phase (v0.8).** Some safety checks (e.g., "is this pose near a no-go region?") could run in either phase. Currently specified: heavy entity-state reasoning in async (~10-20 Hz), lightweight geometric checks in sync (100-500 Hz). But the boundary is not sharp. Decision criteria: latency, computational cost, information freshness, false positive rate. Needs formal design document before Phase 1.
+29. **Async/sync boundary: which checks belong in which phase (v0.8).** Some safety checks (e.g., "is this pose near a no-go region?") could run in either phase. Currently specified: heavy entity-state reasoning in async (~10-20 Hz), lightweight geometric checks in sync (100-500 Hz). But the boundary is not sharp. Decision criteria: latency, computational cost, information freshness, false positive rate. Needs formal design document before Phase 1.
 
 ---
 
@@ -1590,8 +1623,9 @@ Decisions that need to be made but are not yet settled. Each blocks specific dow
 
 - **Affordance space (v0.4):** A continuous learned subspace `R^d_aff` of the joint embedding capturing the functional properties of slots. Each slot has an `affordance_vector` (its position in the space). Functionally similar slots have nearby vectors regardless of category. Replaces the closed list of named affordance predicates as the primary representation.
 - **Affordance (named):** A *labeled region* of the affordance subspace, exposed as a readout head on the embedding (e.g., `graspable_along_axis`, `has_cutting_edge`, `absorbs_fluid`). Yields a confidence in [0, 1]. New named affordances can be added by labeling examples and training a new readout, without retraining the affordance subspace itself.
-- **Behavior contract (v0.4):** A specification of behavior for a given directive, with two slot classes. **Hard slots** (formally verifiable predicates, force envelopes, forbidden constraint types, abort conditions) are consumed by the safety filter. **Soft slots** (free-form success criteria, learned quality measures, surgeon-stated intent, affordance requirements) are consumed by the substrate as conditioning and by the runtime via learned monitor heads. Used by the runtime for hard + soft monitoring and by the safety filter for envelope parameterization.
-- **CBF (Control Barrier Function):** A function over scene state whose forward-invariance under commanded action implies safety. Used in the safety filter as a hard constraint.
+- **Behavior contract (v0.4):** A specification of behavior for a given directive, with two slot classes. **Hard slots** (formally verifiable predicates, force envelopes, forbidden constraint types, abort conditions) are consumed by the **safety evaluator** (SafetySurface + sync command gate; §5.10). **Soft slots** (free-form success criteria, learned quality measures, surgeon-stated intent, affordance requirements) are consumed by the substrate as conditioning and by the runtime via learned monitor heads. Used by the runtime for hard + soft monitoring and by the safety evaluator for envelope parameterization.
+- **CBF (Control Barrier Function):** A function over scene state whose forward-invariance under commanded action implies safety. Used in the **sync command gate** as a hard constraint.
+- **Safety filter (legacy):** Pre-v0.8 name for the final command gate. In v0.8 use **sync command gate** (part of the **safety evaluator**); see document header terminology.
 - **Compositional generalization:** A model's ability to produce coherent behavior on combinations of training inputs it has not directly seen. The central architectural claim of substrate-as-policy.
 - **Conditioning bundle:** The package of inputs the planner provides to the substrate runtime each tick: language directive, behavior contract, modulation parameters, attention targets. Replaces "skill + parameters" in v0.3.
 - **Case log:** The accumulated logged frames + per-case metadata from all teleop and autonomous sessions. An operational artifact in the data pipeline (§8.1.3), used for surgeon UI, audit, training-data curation, and failure analysis. *Not* an architectural memory layer; not queried by the substrate at inference time.
@@ -1602,8 +1636,8 @@ Decisions that need to be made but are not yet settled. Each blocks specific dow
 - **Directive (language directive):** A natural-language description of the surgeon-or-planner-intended behavior (e.g., "aspirate intact tumor tissue at slot tissue_007 with depth ≤ 2 mm"). Drawn from a continuous distribution of language patterns the substrate has been trained on (v0.4); not from an enumerated vocabulary.
 - **Directive distribution (v0.4):** The distribution over natural-language directives the substrate has been trained on. Replaces the v0.3 implicit "directive vocabulary" framing. Capability is measured by coverage of this distribution, not by counting supported directive types.
 - **Embedding (slot embedding):** A learned multi-modal vector representation of a slot. The primary data of the slot; types and affordances are derived from it.
-- **Constraint type (v0.4):** Closed enum of formal constraint kinds the safety filter can enforce: `NO_GO_REGION`, `FORCE_LIMIT`, `PROXIMITY_ALERT`, `DO_NOT_ACTION`, `REQUIRED_PROXIMITY`, etc. Adding a new constraint type requires extending the safety filter's verified code.
-- **Surgeon tag (v0.4):** Two-layer surgeon-authored tag on a slot. **Constraint type** (deterministic, from the closed enum) + **constraint params** + **natural-language content** (open, free-form description) + **slot anchor**. The constraint type and params drive the safety filter; the natural-language content drives surgeon communication, case-log retrieval (surgeon UI, audit, training-data curation), and audit. Surgeon visual confirmation gates the tag's activation as a hard constraint.
+- **Constraint type (v0.4):** Closed enum of formal constraint kinds the **sync command gate** enforces (with SafetySurface; §5.10): `NO_GO_REGION`, `FORCE_LIMIT`, `PROXIMITY_ALERT`, `DO_NOT_ACTION`, `REQUIRED_PROXIMITY`, etc. Adding a new constraint type requires extending verified gate code.
+- **Surgeon tag (v0.4):** Two-layer surgeon-authored tag on a slot. **Constraint type** (deterministic, from the closed enum) + **constraint params** + **natural-language content** (open, free-form description) + **slot anchor**. The constraint type and params drive the **sync gate**; the natural-language content drives surgeon communication, case-log retrieval (surgeon UI, audit, training-data curation), and audit. Surgeon visual confirmation gates the tag's activation as a hard constraint.
 - **HRN (Hierarchical Reasoning Network):** A class of recurrent neural network that performs deliberative iterative reasoning.
 - **InfoNCE:** A widely used contrastive loss function. The default training objective for the joint embedding model's cross-modal alignment.
 - **Joint embedding:** A single embedding space shared across modalities (vision, geometry, kinematics, force, language). Allows queries from any modality to retrieve neighbors in any other.
@@ -1611,23 +1645,23 @@ Decisions that need to be made but are not yet settled. Each blocks specific dow
 - **Modulation:** Continuous bias signals from the planner to the substrate (caution_level, time_pressure, attention_targets). Updates more frequently than directives; lets the planner re-bias active execution without re-issuing intent. Brain-inspired (PFC-PMC modulation analog).
 - **MPC (Model Predictive Control):** Optimization-based control that re-plans at every step over a receding horizon. Used in the fast controller.
 - **OOD (Out-of-Distribution):** Refers to scenarios that fall outside the substrate's training distribution. Detected via embedding distance and substrate confidence; used to gate autonomy.
-- **Policy substrate:** The compositional learned policy network that is the action source in v0.3. A unified network conditioned on language directives, contracts, retrieved cases, and runtime context, producing target trajectories or commanded actions. Replaces the discrete skill library.
+- **Policy substrate:** The compositional learned policy network that is the action source in v0.3. A unified network conditioned on language directives, contracts, and runtime context, producing target trajectories or commanded actions. Replaces the discrete skill library. (Inference-time case retrieval / RAG is not in the runtime bundle; §8 case log is operational and training-time only.)
 - **RAG (Retrieval-Augmented Generation):** Architecture pattern where a learned model is augmented with retrieval over an indexed corpus. *Not used architecturally in this system as of v0.5* — the case log is queried for surgeon UI / audit / curation but not as substrate input. Considered and rejected as inference-time retrieval; cross-procedure influence happens through training-data curation and online fine-tuning instead.
 - **LoRA (Low-Rank Adaptation):** Parameter-efficient fine-tuning method that trains small adapter matrices added to a frozen base model. Used here for fast surgeon-teaching fine-tunes (§8.2) on hours-to-overnight cadence.
 - **Online fine-tuning:** The mechanism for fast assimilation of surgeon-flagged teaching cases without waiting for the next full retrain. LoRA-style adapters trained on flagged cases, gated by per-directive evaluation suites, deployed if passing, and merged into the base substrate at the next periodic full retrain.
 - **SDF (Signed Distance Field):** Geometric representation of a region as a function whose value is the signed distance to the region's boundary. Used for no-go regions and anatomy.
 - **SE(3):** The Special Euclidean group of rigid-body transformations in 3D (rotation + translation). The state space of tool poses.
-- **Slot:** A persistent object instance in the scene graph. Embedding-first: its primary data is a learned embedding; types, affordances, and dynamics adapters are derived; surgeon tags are explicit.
+- **Slot:** A persistent object instance in **scene state** (§5.3), held inside the **entity knowledge store**. Embedding-first: its primary data is a learned embedding; types, affordances, and dynamics adapters are derived; surgeon tags are explicit.
 - **Slot Attention:** A neural mechanism that maintains object-centric representations as a fixed or variable number of "slots."
 - **SSM (State Space Model):** Class of sequence models with linear-time scaling and explicit recurrent state. Mamba is the prominent example.
 - **Substrate runtime:** The thin layer between the planner and the policy substrate that handles I/O, contract monitoring, OOD detection, re-conditioning, and escalation. Replaces "skill executor" in v0.3.
-|- **SystemAttentionState (v0.6):** Unified modulation state produced once per mid-loop tick by aggregating planner modulation, risk signals, attention targets, and halting flags. All control and perception components consume this single state instead of reading modulation signals independently. Reduces signal inconsistency and provides a single inspection surface for understanding system behavior.
-|- **System attention module (v0.6):** Deterministic coordination layer that aggregates four independent modulation channels (planner modulation, voluntary attention, safety evaluator signals, adaptive halting) into a single unified `SystemAttentionState` consumed by all downstream components. Fail-closed: higher caution wins, slot unions are merged. Not learned; pure coordination.
-|- **Safety evaluator (v0.8):** Two-phase entity-informed safety system that reads entity state and publishes an interpretable safety surface. **Async assessment phase (~10-20 Hz):** reads entity embeddings, interaction digests, world model deformations; computes per-entity constraints (deformation-compensated no-go geometry, context-aware force envelopes, cumulative risk scores); exposes interpretable signals to planner; retains direct override path (≤50 ms). **Sync command gate phase (100-500 Hz):** fast deterministic checks of commanded actions against the safety surface and Layer 1 physical invariants; fail-closed: any error vetoes. Absorbs former risk system capabilities (conformal prediction, per-entity risk scoring, escalation triggers). Replaces former safety filter with honest model-dependence and dedicated training separation from policy.
-|- **Safety surface (v0.8):** Pre-computed, entity-informed constraint landscape published by the safety evaluator's async assessment phase (~10-20 Hz). Contains per-entity constraints (deformation-compensated no-go SDFs, context-aware force envelopes, cumulative risk scores, safety margins, confidence bounds), Layer 1 physical invariants, and calibrated uncertainty. The inspectable intermediate artifact: logged for audit, consumed by planner for reasoning, visualized in surgeon UI, checked by the sync command gate (100-500 Hz). Replaces former "decoupled safety constraint surface" (which was claimed but not actually decoupled).
-|- **Physical invariant layer (v0.8):** Layer 1 of the safety evaluator. Hard constraints about the robot hardware, not the patient anatomy: joint limits, workspace bounds, hardware force/velocity limits, singularity avoidance, communication watchdog. Formally verifiable, model-independent. Checked by both async assessment and sync command gate.
-|- **Async safety assessment (v0.8):** Phase 1 of the safety evaluator (~10-20 Hz). Reads entity state (embeddings, interaction digests, world model deformations), interprets learned entity context, computes per-entity constraints, publishes safety surface, exposes interpretable signals to planner. Absorbs conformal prediction, per-entity risk scoring, escalation triggers from former risk system. Produces SafetySurface data structure with per-entity EntityConstraints including deformation-compensated geometry, context-aware envelopes, tissue risk scores, and calibrated confidence.
-|- **Sync command gate (v0.8):** Phase 2 of the safety evaluator (100-500 Hz). Fast and thin. Checks each commanded action against the pre-computed safety surface + Layer 1 physical invariants. No heavy inference per command; just geometric and envelope checks. Produces SafetyDecision (pass/project/veto). Fail-closed: any error vetoes. Retains all properties of former safety filter (100% command coverage, no bypass paths, immediate surgeon override).
+- **SystemAttentionState (v0.6):** Unified modulation state produced once per mid-loop tick by aggregating planner modulation, risk signals (from async safety assessment post-v0.8), attention targets, and halting flags. All control and perception components consume this single state instead of reading modulation signals independently. Reduces signal inconsistency and provides a single inspection surface for understanding system behavior.
+- **System attention module (v0.6):** Deterministic coordination layer that aggregates four independent modulation channels (planner modulation, voluntary attention, safety evaluator async-assessment signals, adaptive halting) into a single unified `SystemAttentionState` consumed by all downstream components. Fail-closed: higher caution wins, slot unions are merged. Not learned; pure coordination.
+- **Safety evaluator (v0.8):** Two-phase entity-informed safety system that reads entity state and publishes an interpretable safety surface. **Async assessment phase (~10-20 Hz):** reads entity embeddings, interaction digests, world model deformations; computes per-entity constraints (deformation-compensated no-go geometry, context-aware force envelopes, cumulative risk scores); exposes interpretable signals to planner; retains direct override path (≤50 ms). **Sync command gate phase (100-500 Hz):** fast deterministic checks of commanded actions against the safety surface and Layer 1 physical invariants; fail-closed: any error vetoes. Absorbs former risk system capabilities (conformal prediction, per-entity risk scoring, escalation triggers). Replaces former safety filter with honest model-dependence and dedicated training separation from policy.
+- **Safety surface (v0.8):** Pre-computed, entity-informed constraint landscape published by the safety evaluator's async assessment phase (~10-20 Hz). Contains per-entity constraints (deformation-compensated no-go SDFs, context-aware force envelopes, cumulative risk scores, safety margins, confidence bounds), Layer 1 physical invariants, and calibrated uncertainty. The inspectable intermediate artifact: logged for audit, consumed by planner for reasoning, visualized in surgeon UI, checked by the sync command gate (100-500 Hz). Replaces former "decoupled safety constraint surface" (which was claimed but not actually decoupled).
+- **Physical invariant layer (v0.8):** Layer 1 of the safety evaluator. Hard constraints about the robot hardware, not the patient anatomy: joint limits, workspace bounds, hardware force/velocity limits, singularity avoidance, communication watchdog. Formally verifiable, model-independent. Checked by both async assessment and sync command gate.
+- **Async safety assessment (v0.8):** Phase 1 of the safety evaluator (~10-20 Hz). Reads entity state (embeddings, interaction digests, world model deformations), interprets learned entity context, computes per-entity constraints, publishes safety surface, exposes interpretable signals to planner. Absorbs conformal prediction, per-entity risk scoring, escalation triggers from former risk system. Produces SafetySurface data structure with per-entity EntityConstraints including deformation-compensated geometry, context-aware envelopes, tissue risk scores, and calibrated confidence.
+- **Sync command gate (v0.8):** Phase 2 of the safety evaluator (100-500 Hz). Fast and thin. Checks each commanded action against the pre-computed safety surface + Layer 1 physical invariants. No heavy inference per command; just geometric and envelope checks. Produces SafetyDecision (pass/project/veto). Fail-closed: any error vetoes. Retains all properties of former safety filter (100% command coverage, no bypass paths, immediate surgeon override).
 - **VLA (Vision-Language-Action model):** A foundation model class that maps observations and instructions to actions. RT-2, OpenVLA, π0 are examples. Bootstrap candidates for the policy substrate.
 - **VLP (Vision-Language Pretraining):** Pretraining paradigm for vision-language models. Surgical VLPs (SurgVLP, etc.) are the bootstrap candidates for the joint embedding model.
 
