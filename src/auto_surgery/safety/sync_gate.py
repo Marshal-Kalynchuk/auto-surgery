@@ -1,0 +1,1 @@
+"""Sync command gate stubs."""

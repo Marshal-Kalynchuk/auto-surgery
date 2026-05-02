@@ -1,0 +1,2 @@
+segment_max_frames: 256
+catalog_relative_path: catalog/sessions.jsonl

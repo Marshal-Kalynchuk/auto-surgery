@@ -1,0 +1,1 @@
+"""Async safety assessment stubs."""

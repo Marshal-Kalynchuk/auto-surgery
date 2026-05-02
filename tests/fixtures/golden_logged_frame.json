@@ -1,0 +1,24 @@
+{
+  "schema_version": "logged_frame_v1",
+  "frame_index": 0,
+  "timestamp_ns": 42,
+  "sensor_payload": {
+    "timestamp_ns": 42,
+    "clock_source": "ntp",
+    "modalities": {
+      "kinematics": {"joint_0": 0.0}
+    }
+  },
+  "scene_snapshot": {
+    "schema_version": "scene_v1",
+    "frame_index": 0,
+    "slots": [],
+    "events": []
+  },
+  "commanded_action": null,
+  "executed_action": null,
+  "safety_decision": null,
+  "skill_state": null,
+  "surgeon_input": null,
+  "outcome_label": null
+}

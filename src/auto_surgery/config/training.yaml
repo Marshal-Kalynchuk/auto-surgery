@@ -1,0 +1,4 @@
+experiment_name: phase0_bootstrap
+bootstrap_m1_steps: 300
+bootstrap_m2_steps: 100
+bootstrap_m3_steps: 400

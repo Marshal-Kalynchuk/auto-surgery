@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.6.14"
+
+      - name: Sync deps (locked; train extra includes PyTorch)
+        run: uv sync --frozen --all-groups --extra train
+
+      - name: Ruff check
+        run: uv run ruff check src tests
+
+      - name: Ruff format
+        run: uv run ruff format --check src tests
+
+      - name: Pyright
+        run: uv run pyright
+
+      - name: Pytest
+        run: uv run pytest -q
