@@ -1,35 +1,41 @@
-%% ML_COMPONENTS.mmd - ML Architecture Data Flow Visualization (v0.8)
-%% Shows how learned and engineered components interact at runtime.
+%% ML_COMPONENTS.mmd - ML Architecture Data Flow Visualization (v1.0)
+%% Updated to reflect ARCHITECTURE.md v2.5: foundation models, self-supervised perception,
+%% IDM-based imitation, three-timescale memory (activations, Hopfield, slow weights).
 %% 
 %% Key concepts:
 %% - Left-to-right data flow from sensors to robot commands
 %% - Operating frequencies shown for each component (Hz or asynchronous)
-%% - ML techniques explicitly labeled on each stage
-%% - Separation of soft (learned) vs hard (engineered) guarantees
-%% - Entity knowledge store with planner-gated consolidation
+%% - Self-supervised foundation models (DINOv2, V-JEPA 2) as perception substrate
+%% - Inverse Dynamics Model (IDM) for pseudo-action extraction from video
+%% - Two perception streams: action (SE(3)) and semantic (V-JEPA 2)
+%% - Slot attention for entity binding (self-supervised)
+%% - Three-timescale memory: activations (working), Hopfield fast weights (case-long), slow weights (cross-case)
 %% - Two-phase safety evaluator: async assessment (10-20 Hz) + sync command gate (100-500 Hz)
-%% 
+%% - Fast forward model for implausibility detection and control refinement
+%% - DINO-WM world model for planner search over predicted futures
+%% - No episodic memory buffer; all memory is embedded in weights or activations
+%%
 %% Related Documentation:
-%% - ARCHITECTURE_CONDENSED.md: §3 (System Overview), §4 (Design Decisions)
-%% - ARCHITECTURE.md: §0.8 (v0.8 Changelog), §5.10 (Safety Evaluator)
-%% - DIAGRAMS_README.md: Overview of all architecture diagrams
+%% - ARCHITECTURE.md: canonical v2.5 spec
+%% - TRAINING_STRATEGY.md: four-tier training (Tiers 0–3 active; Tier 4 deferred)
+%% - RISKS_AND_VALIDATION.md: load-bearing bets and first-month experiments
 
 graph LR
     %% ======================================================================
     %% MAIN SPINE NODES
     %% ======================================================================
 
-    sensors["🎥 SENSOR INPUTS<br/>Vision: 60-120 Hz<br/>Kinematics: 500 Hz<br/>Force: 1 kHz<br/>Audio: 48 kHz"]
+    sensors["🎥 SENSOR INPUTS<br/>Mono surgical video: 24-60 Hz<br/>(Real phases: stereo + kinematics)<br/>Force/torque: when available<br/>Audio: optional"]
 
-    entity_store["📚 ENTITY KNOWLEDGE STORE<br/>Per-entity state:<br/>• Current observation (refreshed ~10-20 Hz)<br/>• Interaction digest (evolved, planner-consolidated)<br/>• Entity embedding (fuses both)<br/>• Pre-computed priors<br/>Patient-specific calibration"]
+    entity_store["📚 ACTIVE ENTITY STATE<br/>Per-entity records:<br/>• Observation embedding (latest)<br/>• State embedding (running fusion)<br/>• Pose (SE(3), not a label)<br/>• Confidence (continuous)<br/>Variable-cardinality (K entities)"]
 
-    world_model["🌐 WORLD MODEL<br/>Embedding-conditioned dynamics<br/>Physics prior + learned residuals<br/>Per-slot adapters<br/>Prediction error feedback<br/>5-20 Hz"]
+    world_model["🌐 WORLD MODEL<br/>DINO-WM on foundation features<br/>Predicts future patch features<br/>Used by slow planner for search<br/>5-20 Hz rollouts"]
 
-    slow_planner["🧩 SLOW PLANNER<br/>Memory gate + Reasoning<br/>MCTS / MPPI / CEM search<br/>Recurrent reasoning module<br/>0.5-2 Hz"]
+    slow_planner["🧩 SLOW PLANNER<br/>Recurrent reasoning module<br/>MCTS / MPPI / CEM search<br/>Memory router (future: Phase 9)<br/>0.5-2 Hz"]
 
-    fast_controller["⚙️ FAST CONTROLLER<br/>Classical, not ML<br/>MPC + Visual Servoing<br/>Impedance/admittance control<br/>Force-aware tracking<br/>100-500 Hz"]
+    fast_controller["⚙️ FAST CONTROLLER<br/>Classical, not ML<br/>MPC + visual servoing<br/>Impedance/admittance control<br/>Forward-model refinement<br/>100-500 Hz"]
 
-    safety_evaluator["🛡️ SAFETY EVALUATOR<br/>Two-phase:<br/>• Async assessment (~10-20 Hz)<br/>• Sync command gate (100-500 Hz)<br/>Reads entity state<br/>Publishes safety surface<br/>Fail-closed"]
+    safety_evaluator["🛡️ SAFETY EVALUATOR<br/>Two-phase:<br/>• Async assessment (~10-20 Hz)<br/>• Sync command gate (100-500 Hz)<br/>Reads active entity state<br/>Forward-model implausibility<br/>Fail-closed"]
 
     robot_output["🤖 ROBOT COMMANDS<br/>Target trajectory<br/>Force/velocity profile<br/>Gripper commands<br/>100-500 Hz"]
 
@@ -37,152 +43,117 @@ graph LR
 
     %% ======================================================================
     %% SUBGRAPH 1: PERCEPTION
-    %% Dual-stream architecture with slot-attention fusion
+    %% Dual-stream architecture: action stream (SE(3)) + semantic stream (V-JEPA 2)
+    %% Both on top of frozen/fine-tuned foundation models
     %% ======================================================================
 
-    subgraph PERCEPTION["📊 PERCEPTION: Dual-Stream + Slot Fusion"]
-        action_geom["⚡ ACTION STREAM<br/>SE(3)-Equivariant Layers<br/>Fast geometry extraction<br/>Contrastive learning<br/>~100+ Hz"]
-        semantic_seg["🎨 SEMANTIC STREAM<br/>SAM 2 / Foundation Models<br/>Surgical fine-tuning<br/>Rich semantic labels<br/>~5-10 Hz"]
-        fusion_slot["🔗 FUSION MECHANISM<br/>Slot attention<br/>Variable-cardinality tracking<br/>Persistent object identity<br/>~10-20 Hz"]
+    subgraph PERCEPTION["📊 PERCEPTION: Dual-Stream Foundation Models"]
+        action_geom["⚡ ACTION STREAM<br/>DINOv2 + SE(3)-Equivariant<br/>Geometry extraction<br/>~100+ Hz"]
+        semantic_seg["🎨 SEMANTIC STREAM<br/>V-JEPA 2 fine-tuned<br/>Surgical semantics<br/>~5-20 Hz"]
+        slot_attention_block["🔗 SLOT ATTENTION<br/>Self-supervised entity binding<br/>Variable-cardinality tracking<br/>Temporal recurrence<br/>~10-20 Hz"]
 
-        action_geom -->|Slow path:<br/>joint embeddings| fusion_slot
-        semantic_seg -->|Semantic<br/>attributes| fusion_slot
+        action_geom -->|SE(3)<br/>features| slot_attention_block
+        semantic_seg -->|V-JEPA 2<br/>features| slot_attention_block
     end
 
     %% ======================================================================
-    %% SUBGRAPH 2: ENTITY KNOWLEDGE UPDATE
-    %% Two-path consolidation: direct (perception/surgeon) + planner-gated
+    %% SUBGRAPH 2: ENTITY BINDING & MEMORY (No consolidation until Phase 9)
+    %% Slot attention → active entity state. Hopfield reads/writes at inference (Phase 5+).
     %% ======================================================================
 
-    subgraph ENTITY_UPDATE["📝 ENTITY KNOWLEDGE CONSOLIDATION"]
-        direct_path["⚡ DIRECT PATH (Ungated)<br/>Perception current obs (~10-20 Hz)<br/>Surgeon corrections (unconditional)<br/>Raw observation input"]
-        consolidated_path["🎛️ CONSOLIDATED PATH (Planner-Gated)<br/>World model prediction errors<br/>Safety evaluator assessments<br/>Event archive records<br/>Planner reasoning conclusions"]
-        digest_update["🔄 DIGEST UPDATE NETWORK<br/>Gated recurrent consolidator<br/>Per-slot dynamics specialization<br/>LoRA-style adapter updates<br/>Runs 0.5-2 Hz on planner signal"]
+    subgraph ENTITY_BINDING["📝 ENTITY BINDING & THREE-TIMESCALE MEMORY"]
+        active_slots["⚡ ACTIVE ENTITY STATE<br/>Per-entity embeddings<br/>Working memory: per-frame updates<br/>Tracker: persistent IDs<br/>~10-20 Hz refresh"]
+        hopfield_mem["🧠 HOPFIELD FAST WEIGHTS<br/>Modern Hopfield network<br/>Case-long episodic storage<br/>Pattern completion under occlusion<br/>Inference-time updates (Phase 5+)<br/>Active from Phase 5"]
+        slow_weight_mem["💾 SLOW WEIGHTS<br/>Model parameters: world model,<br/>policy substrate, planner<br/>Cross-case learning<br/>Offline consolidation (Phase 9+)<br/>Deferred"]
     end
 
     %% ======================================================================
-    %% SUBGRAPH 3: POLICY EXECUTION
-    %% System attention coordination + compositional substrate
+    %% SUBGRAPH 3: POLICY EXECUTION (Behavioral cloning on pseudo-actions from IDM)
     %% ======================================================================
 
-    subgraph POLICY["🎯 POLICY EXECUTION: Substrate + Monitoring"]
-        attention_coord["🎛️ SYSTEM ATTENTION<br/>Coordinates four channels:<br/>• Planner modulation<br/>• Safety evaluator signals<br/>• Attention targets<br/>• Adaptive halting<br/>Deterministic aggregation"]
-        comp_substrate["🧬 COMPOSITIONAL SUBSTRATE<br/>Hybrid SSM-Transformer<br/>Language-conditioned<br/>Behavior contracts<br/>5-20 Hz"]
-        monitor_mod["📊 MONITORING & MODULATION<br/>Ensemble disagreement<br/>Mahalanobis OOD detection<br/>Contract satisfaction scoring<br/>Safety-aware gain modulation<br/>~20 Hz"]
-        control_handoff["📤 CONTROL HAND-OFF<br/>Deterministic, not ML<br/>Short-horizon trajectory targets<br/>Waypoint interpolation<br/>100-500 Hz"]
+    subgraph POLICY["🎯 POLICY EXECUTION: Behavioral Cloning + Substrate"]
+        idm_bridge["🔀 INVERSE DYNAMICS BRIDGE<br/>IDM extracts pseudo-actions<br/>from video transitions (offline)<br/>Surgical video → action labels<br/>Used only for imitation training"]
+        comp_substrate["🧬 POLICY SUBSTRATE<br/>Hybrid SSM-Transformer<br/>Behavioral cloning on<br/>pseudo-actions + directives<br/>5-20 Hz"]
+        monitor_mod["📊 MONITORING & CONFIDENCE<br/>Ensemble disagreement<br/>OOD detection (Mahalanobis)<br/>Contract satisfaction scoring<br/>~20 Hz"]
 
-        attention_coord -->|Unified<br/>modulation| comp_substrate
-        comp_substrate -->|Behavior<br/>output| monitor_mod
-        monitor_mod -->|Modulated<br/>commands| control_handoff
+        idm_bridge -.->|Offline:<br/>pseudo-action<br/>extraction| comp_substrate
+        comp_substrate -->|Policy<br/>output| monitor_mod
     end
 
     %% ======================================================================
     %% SUBGRAPH 4: FEEDBACK & ADAPTATION
-    %% Online adaptation + safety escalation + event archive
+    %% Forward model for control refinement + implausibility detection
     %% ======================================================================
 
-    subgraph FEEDBACK["🔄 FEEDBACK & ADAPTATION"]
-        event_archive["📋 EVENT ARCHIVE<br/>High-resolution interaction records<br/>Indexed: slot ID + event type + time<br/>Asynchronous, not inference-time<br/>Used for audit & training pipeline"]
-        online_adapt["🔄 ONLINE ADAPTATION<br/>LoRA-style adapter updates<br/>Per-slot dynamics specialization<br/>Contact-aware residual learning<br/>~20 Hz"]
-        safety_escalation["⚠️ SAFETY ESCALATION<br/>Critical threshold detection<br/>Direct override path<br/>≤50 ms latency target<br/>Immediate surface update"]
+    subgraph FEEDBACK["🔄 CONTROL REFINEMENT & SAFETY"]
+        forward_model["⚡ FAST FORWARD MODEL<br/>Predicts sensory_{t+1} from motor_t<br/>Trained in SOFA<br/>Implausibility detection<br/>~100 Hz"]
+        event_archive["📋 EVENT ARCHIVE<br/>High-resolution records<br/>Used for training & audit<br/>Not inference-time"]
+        safety_escalation["⚠️ SAFETY ESCALATION<br/>Critical threshold detection<br/>Direct override path<br/>≤50 ms latency<br/>Independent of policy"]
 
-        event_archive -.->|Events to<br/>consolidate| digest_update
-        online_adapt -->|Adapted<br/>model| safety_escalation
+        forward_model -->|Implausibility<br/>signal| safety_escalation
+        forward_model -->|Optional refinement| fast_controller
+        event_archive -.->|Offline training<br/>(future phases)| world_model
     end
 
     %% ======================================================================
-    %% EDGES: Sensors → Perception
+    %% EDGES: Sensors → Perception (Foundation models)
     %% ======================================================================
 
-    sensors -->|Multi-modal contrastive<br/>learning| action_geom
-    sensors -->|Visual grounding| semantic_seg
+    sensors -->|DINOv2 + SE(3)<br/>backbone| action_geom
+    sensors -->|V-JEPA 2<br/>backbone| semantic_seg
 
     %% ======================================================================
-    %% EDGES: Perception → Entity Store (Direct Path, Ungated)
+    %% EDGES: Perception → Entity State (Self-supervised slot attention)
     %% ======================================================================
 
-    fusion_slot -->|Current<br/>observation| direct_path
+    action_geom -->|Geometry<br/>features| slot_attention_block
+    semantic_seg -->|Semantic<br/>features| slot_attention_block
+    slot_attention_block -->|Per-entity<br/>embeddings| active_slots
 
     %% ======================================================================
-    %% EDGES: Direct Path → Entity Store
+    %% EDGES: Active Entity State → Memory & Reasoning
     %% ======================================================================
 
-    direct_path -->|Refreshes current obs<br/>~10-20 Hz| entity_store
-    surgeon -->|Unconditional<br/>corrections| direct_path
+    active_slots -->|Case-long<br/>pattern completion<br/>(Phase 5+)| hopfield_mem
+    active_slots -->|Embeddings<br/>for planning| slow_planner
+    active_slots -->|Embeddings<br/>for world model| world_model
+    active_slots -->|Safety<br/>context| safety_evaluator
 
     %% ======================================================================
-    %% EDGES: Entity Store → Reasoning & Safety
+    %% EDGES: World Model → Signals & Search
     %% ======================================================================
 
-    entity_store -->|Evolved entity<br/>embeddings| slow_planner
-    entity_store -->|Dynamics<br/>input| world_model
-    entity_store -->|Entity embeddings<br/>+ digests| safety_evaluator
-
-    %% ======================================================================
-    %% EDGES: World Model → Signals (Consolidated Path, Planner-Gated)
-    %% ======================================================================
-
-    world_model -.->|Prediction<br/>errors| consolidated_path
-    world_model -.->|Predictions| slow_planner
+    world_model -->|Predictions<br/>for search| slow_planner
     world_model -->|Deformation<br/>predictions| safety_evaluator
 
     %% ======================================================================
-    %% EDGES: Safety Evaluator → Signals
+    %% EDGES: IDM → Policy Substrate (Offline pseudo-action extraction)
     %% ======================================================================
 
-    safety_evaluator -.->|Safety surface signals<br/>per-entity constraints<br/>calibrated confidence| consolidated_path
-    safety_evaluator -.->|Safety surface<br/>interpretable signals| slow_planner
+    sensors -->|Offline: extract<br/>pseudo-actions| idm_bridge
 
     %% ======================================================================
-    %% EDGES: Planner as Memory Gate
+    %% EDGES: Policy Substrate Execution
     %% ======================================================================
 
-    consolidated_path -->|Signal input<br/>buffer| slow_planner
-    slow_planner -->|Consolidation<br/>decisions| digest_update
-    slow_planner -->|Directives +<br/>modulation| attention_coord
-
-    %% ======================================================================
-    %% EDGES: Digest Update → Entity Store
-    %% ======================================================================
-
-    digest_update -->|Updated interaction<br/>digests| entity_store
-
-    %% ======================================================================
-    %% EDGES: Execution → Control → Safety → Robot
-    %% Action stream fast path + policy hand-off both feed controller
-    %% ======================================================================
-
-    action_geom -->|Fast path:<br/>geometry for servoing<br/>~100+ Hz| fast_controller
-    control_handoff -->|Behavior<br/>commands| fast_controller
-    fast_controller -->|Refined<br/>trajectory| safety_evaluator
-    safety_evaluator --> robot_output
-
-    %% ======================================================================
-    %% EDGES: Feedback Loops
-    %% ======================================================================
-
-    robot_output -.->|Action<br/>feedback| action_geom
-    robot_output -.->|Observation<br/>feedback| semantic_seg
-
-    %% ======================================================================
-    %% EDGES: Event Capture
-    %% ======================================================================
-
-    sensors -.->|High-res event<br/>records| event_archive
+    active_slots -->|Entity context<br/>+ directives| comp_substrate
+    surgeon -->|Directives &<br/>corrections| comp_substrate
+    slow_planner -->|Goals & behavior<br/>contracts| comp_substrate
+    comp_substrate -->|Behavior<br/>output| monitor_mod
+    monitor_mod -->|Modulated<br/>commands| fast_controller
 
     %% ======================================================================
     %% LEGEND
     %% ======================================================================
 
     subgraph LEGEND["📖 LEGEND: Color Coding Strategy"]
-        legend_learned["🔴 LEARNED (ML)<br/>Adaptive neural networks<br/>Embeddings, trained policies"]
-        legend_engineered["⚪ ENGINEERED/DETERMINISTIC<br/>Classical control, CBFs,<br/>formal verification"]
-        legend_hybrid["🟠 HYBRID (ML + FORMAL)<br/>Safety evaluator<br/>calibrated + verified"]
-        legend_deliberative["🟢 DELIBERATIVE REASONING<br/>Slow planning, goal<br/>composition, high-level logic"]
-        legend_perception["🔵 PERCEPTION & GEOMETRY<br/>Vision encoders, geometry<br/>extraction, SE(3) layers"]
-        legend_fusion["🟣 FUSION/INTEGRATION<br/>Scene state, embeddings<br/>multi-modal combination"]
+        legend_foundation["🟡 FOUNDATION MODELS<br/>Pretrained (DINOv2, V-JEPA 2,<br/>DINO-WM, Modern Hopfield)"]
+        legend_learned["🔴 LEARNED (ML)<br/>Fine-tuned on surgical video,<br/>trained on pseudo-actions"]
+        legend_engineered["⚪ ENGINEERED/DETERMINISTIC<br/>Classical control, safety<br/>gates, formal verification"]
+        legend_hybrid["🟠 HYBRID (ML + FORMAL)<br/>Safety evaluator, forward-model<br/>implausibility detection"]
+        legend_memory["🧠 MEMORY<br/>Activations (working), Hopfield<br/>(case-long), slow weights (cross-case)"]
 
-        legend_learned ~~~ legend_engineered ~~~ legend_hybrid ~~~ legend_deliberative ~~~ legend_perception ~~~ legend_fusion
+        legend_foundation ~~~ legend_learned ~~~ legend_engineered ~~~ legend_hybrid ~~~ legend_memory
     end
 
     %% ======================================================================
@@ -191,7 +162,7 @@ graph LR
 
     %% Subgraph backgrounds
     style PERCEPTION fill:#e0f2f1,stroke:#004d40,stroke-width:2px,stroke-dasharray: 5 5,color:#000
-    style ENTITY_UPDATE fill:#fff8f0,stroke:#bf360c,stroke-width:2px,stroke-dasharray: 5 5,color:#000
+    style ENTITY_BINDING fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,stroke-dasharray: 5 5,color:#000
     style POLICY fill:#fce4ec,stroke:#880e4f,stroke-width:2px,stroke-dasharray: 5 5,color:#000
     style FEEDBACK fill:#fff3e0,stroke:#e65100,stroke-width:2px,stroke-dasharray: 5 5,color:#000
     style LEGEND fill:#f5f5f5,stroke:#424242,stroke-width:2px,color:#000
@@ -201,45 +172,44 @@ graph LR
     style robot_output fill:#fff9c4,stroke:#f57f17,stroke-width:2px,color:#000
     style surgeon fill:#fff9c4,stroke:#f57f17,stroke-width:2px,color:#000
 
-    %% Teal (Perception/Geometry)
+    %% Teal (Perception - Foundation models)
     style action_geom fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000
     style semantic_seg fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000
     style world_model fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000
 
-    %% Purple (Fusion/Integration)
-    style fusion_slot fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#fff
+    %% Purple (Slot Attention)
+    style slot_attention_block fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#fff
 
-    %% Orange-Red (Entity Knowledge Store - central innovation)
-    style entity_store fill:#ffccbc,stroke:#d84315,stroke-width:3px,color:#000
+    %% Light Purple (Active Entity State)
+    style active_slots fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000
 
-    %% Brown (Entity Update - consolidation paths)
-    style direct_path fill:#d7ccc8,stroke:#5d4037,stroke-width:2px,color:#000
-    style consolidated_path fill:#d7ccc8,stroke:#5d4037,stroke-width:2px,color:#000
-    style digest_update fill:#bcaaa4,stroke:#3e2723,stroke-width:2px,color:#fff
-    style event_archive fill:#efebe9,stroke:#795548,stroke-width:2px,color:#000
+    %% Purple (Hopfield Memory)
+    style hopfield_mem fill:#c8a2c8,stroke:#6a1b9a,stroke-width:2px,color:#fff
+    
+    %% Gray (Slow Weights)
+    style slow_weight_mem fill:#d7ccc8,stroke:#5d4037,stroke-width:2px,color:#000
 
-    %% Pink (Learned ML)
+    %% Pink (Learned ML - Policy)
     style comp_substrate fill:#f8bbd0,stroke:#c2185b,stroke-width:2px,color:#000
-
-    %% Gray (Coordination)
-    style attention_coord fill:#d0ccc0,stroke:#5d4037,stroke-width:2px,color:#000
+    style idm_bridge fill:#f48fb1,stroke:#c2185b,stroke-width:2px,color:#000
 
     %% Orange (Monitoring)
     style monitor_mod fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000
 
-    %% Red/Orange Mix (Hybrid Safety)
+    %% Red/Orange Mix (Hybrid Safety & Control)
     style fast_controller fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
     style safety_evaluator fill:#ffb74d,stroke:#e65100,stroke-width:2px,color:#000
-    style control_handoff fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
+    style forward_model fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000
 
-    %% Green (Adaptation & Escalation)
-    style online_adapt fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#000
+    %% Orange (Escalation)
     style safety_escalation fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000
 
+    %% Brown (Event Archive)
+    style event_archive fill:#efebe9,stroke:#795548,stroke-width:2px,color:#000
+
     %% Legend
+    style legend_foundation fill:#fff9c4,stroke:#f57f17,stroke-width:2px,color:#000
     style legend_learned fill:#f8bbd0,stroke:#c2185b,stroke-width:2px,color:#000
     style legend_engineered fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
     style legend_hybrid fill:#ffb74d,stroke:#e65100,stroke-width:2px,color:#000
-    style legend_deliberative fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#000
-    style legend_perception fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000
-    style legend_fusion fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#fff
+    style legend_memory fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000
