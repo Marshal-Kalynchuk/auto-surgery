@@ -1,0 +1,13 @@
+---
+description: Keep upstream model, library, and dataset links centralized in docs/REFERENCES.md
+alwaysApply: true
+---
+
+# External References
+
+Use `docs/REFERENCES.md` as the source of truth for upstream links tied to the architecture.
+
+- Check `docs/REFERENCES.md` before broad web search or when naming a new external dependency.
+- Prefer the canonical links listed there for DINOv2, V-JEPA 2, DINO-WM, SOFA, slot attention, Hopfield, SE(3)-Transformer, Equiformer, BRIDGE, RoboNet, OpenVLA, SAM 2, VL-JEPA, Mamba-2, and Jamba.
+- If a new upstream resource becomes load-bearing, add it to `docs/REFERENCES.md` first, then reference that file from the relevant agent or rule.
+- Do not duplicate long link lists in specialized agent files unless the agent truly needs a tiny subset inline.

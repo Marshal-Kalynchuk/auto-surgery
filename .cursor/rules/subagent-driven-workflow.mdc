@@ -1,0 +1,68 @@
+---
+description: Route work through controlled-runtime subagents to keep parent context small
+alwaysApply: true
+---
+
+# Subagent Routing
+
+Use subagents via the `Task` tool to reduce parent-agent context bloat and token usage. The parent agent coordinates and synthesizes; subagents do broad reading, searching, execution, and repair.
+
+**CRITICAL:** You MUST use the exact `subagent_type` names defined below. Do NOT invent new subagent types or create ad hoc agents.
+
+## How to Invoke (Example)
+
+When delegating, use the `Task` tool with a specific `subagent_type` from the approved list:
+
+```json
+// ✅ GOOD: Using an approved subagent type
+{
+  "subagent_type": "coding-worker",
+  "description": "Implement IDM data generation script",
+  "prompt": "Read docs/ARCHITECTURE.md section 9.1 and implement the IDM training data generation script in SOFA."
+}
+
+// ❌ BAD: Inventing a subagent type that doesn't exist
+{
+  "subagent_type": "my-custom-sofa-agent", 
+  "description": "Run SOFA",
+  "prompt": "..."
+}
+```
+
+## Routing Order
+
+1. Use `worker` first for codebase analysis, multi-file investigation, debugging, refactors, and implementation planning.
+2. Use `simple-worker` for bounded cheap checks: routing, extraction, summarization, schema checks, and "is this done?" validation.
+3. Use `coding-worker` for focused code edits after `worker` has produced findings or a patch plan.
+4. Use `quality-reviewer` for routine code quality review, regression checks, test-gap review, and plan-compliance review.
+5. Use `repair-worker` only when a cheaper worker fails, reports uncertainty, or correctness risk is high.
+6. Use `senior-reasoning` when findings conflict, judgment is unclear, or broad synthesis is needed.
+7. Use `senior-repair` only after `repair-worker` stalls on a stubborn or high-risk fix.
+
+## Required Delegation
+
+Launch a subagent before doing parent-side exploration when the task involves:
+- More than one subsystem or service
+- More than a few file reads or searches
+- Architecture or codebase findings
+- Implementation planning before edits
+- Reviewing non-trivial code changes or agent-produced patches
+
+## Specialized Agents
+
+Use a specialist only when its domain clearly matches the task:
+
+| Situation | Agent |
+|-----------|-------|
+| Run SOFA simulations, generate IDM data, or test the fast forward model | `sofa-sim-operator` |
+| Fine-tune foundation models (DINOv2, V-JEPA 2, DINO-WM) or run behavioral cloning | `model-trainer` |
+| Audit or verify the Layer 1 sync gate and Layer 2 safety evaluator | `safety-verifier` |
+| Test or implement the `Environment` protocol for KUKA or neuroArm | `robot-interface-tester` |
+
+If unsure, use `worker`; it can recommend a specialist handoff.
+
+## Exceptions
+
+- Do not use a subagent for tiny single-file edits, simple questions, or obvious one-command checks.
+- Do not create nested or circular subagent chains.
+- Do not ask subagents to dump large raw context back to the parent; request findings, paths, and next actions.

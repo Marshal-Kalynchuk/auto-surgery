@@ -1,0 +1,21 @@
+# Graphiti Memory Logging
+
+When making load-bearing architectural decisions or completing validation experiments, you MUST log them to the persistent Graphiti memory.
+
+## How to Log
+
+Use the `add_memory` MCP tool from `user-graphiti-memory`:
+- `group_id`: MUST be `"auto-surgery"`
+- `source`: MUST be `"json"`
+- `episode_body`: MUST be a stringified JSON object conforming to the schemas defined in `docs/GRAPHITI_SCHEMA.md`.
+
+## When to Log
+
+1. **Decisions (ADRs):** When a new architectural path is chosen, an alternative is rejected, or an old decision is superseded. Use `kind: "decision"`.
+2. **Experiments:** When a validation experiment (e.g., from `RISKS_AND_VALIDATION.md`) is run and yields a result. Use `kind: "experiment"`.
+
+## Retrieval
+
+Before proposing major changes or if you are unsure why a component exists, use `search_nodes` or `search_memory_facts` with `group_ids=["auto-surgery"]` to retrieve past context.
+
+See `docs/GRAPHITI_SCHEMA.md` for the exact JSON schemas.

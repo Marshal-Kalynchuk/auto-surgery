@@ -1,0 +1,45 @@
+---
+description: Core coding standards, methodology, and clean code practices for the repository
+alwaysApply: true
+---
+
+# Coding Standards & Methodology
+
+Follow these core principles for all code contributions in this repository to maintain high quality, readability, and maintainability.
+
+## 1. Clean Code & No Slop
+- **No Bandaids:** Always fix the root cause of an issue. Do not apply superficial patches or hacky workarounds.
+- **No Slop:** Write deliberate, well-thought-out code. Avoid unnecessary comments, dead code, and overly complex logic.
+- **Meaningful Naming:** Use clear, descriptive, and intention-revealing names for variables, functions, and classes.
+
+## 2. DRY (Don't Repeat Yourself)
+- Extract reusable logic into shared functions, methods, or classes.
+- Avoid duplicating code blocks. If you see the same logic twice, refactor it into a single source of truth.
+
+## 3. Methodology & Architecture
+- **Testable Code:** Write pure functions where possible. Isolate side effects and minimize global state.
+- **Explicit Error Handling:** Fail fast and handle errors explicitly. Do not swallow exceptions (e.g., avoid bare `except:` or `except Exception: pass`).
+- **Type Hinting:** Use Python type hints consistently for function signatures and complex variables to ensure clarity and catch errors early.
+
+### Examples
+
+```python
+# ❌ BAD: Bandaid fix, sloppy naming, swallowed error, no type hints
+def proc(d):
+    try:
+        if d.get('val') is None: return 0 # fix for null
+        return d['val'] * 2
+    except:
+        pass
+
+# ✅ GOOD: Explicit error handling, clear naming, root cause addressed, type hints
+def calculate_doubled_value(data: dict[str, int | None]) -> int:
+    if 'val' not in data:
+        raise ValueError("Missing required key: 'val'")
+    
+    value = data['val']
+    if value is None:
+        return 0
+        
+    return value * 2
+```
