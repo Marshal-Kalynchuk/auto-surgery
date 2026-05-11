@@ -10,17 +10,19 @@ from auto_surgery.logging.storage import session_manifest_path
 from auto_surgery.logging.writer import SessionWriter
 from auto_surgery.schemas.commands import RobotCommand
 from auto_surgery.schemas.logging import LoggedFrame
-from auto_surgery.schemas.manifests import DataClassification, EnvConfig, DatasetManifest
+from auto_surgery.schemas.manifests import DataClassification, DatasetManifest, EnvConfig
 from auto_surgery.training.datasets import frame_count_estimate, iter_logged_frames
 from auto_surgery.training.extract_pseudo_actions import extract_pseudo_actions
 from auto_surgery.training.idm_train import train_idm
+from auto_surgery.training.sofa_smoke import run_sofa_smoke_pipeline
+
+
+def _ensure_torch_available() -> None:
+    pytest.importorskip("torch", reason="torch extra is required for Stage-0 IDM training")
 
 
 def test_idm_stage0_stub_pipeline(tmp_path: Path) -> None:
-    try:
-        import torch  # noqa: F401
-    except ImportError:
-        pytest.skip("torch extra is required for Stage-0 IDM training")
+    _ensure_torch_available()
 
     root_uri = tmp_path.as_uri().rstrip("/") + "/"
     derived_root_uri = (tmp_path / "derived").as_uri().rstrip("/") + "/"
@@ -58,7 +60,8 @@ def test_idm_stage0_stub_pipeline(tmp_path: Path) -> None:
 
     manifest = writer.finalize()
     CaseCatalog(root_uri).append(
-        manifest, manifest_relative_path=session_manifest_path("case_id_stage0", "session_id_stage0")
+        manifest,
+        manifest_relative_path=session_manifest_path("case_id_stage0", "session_id_stage0"),
     )
     manifest_uri = f"{root_uri}{session_manifest_path('case_id_stage0', 'session_id_stage0')}"
 
@@ -98,16 +101,41 @@ def test_idm_stage0_stub_pipeline(tmp_path: Path) -> None:
 
     mse_sum = 0.0
     n = 0
-    for orig, pred in zip(orig_frames, pred_frames):
+    for orig, pred in zip(orig_frames, pred_frames, strict=True):
         assert orig.frame_index == pred.frame_index
         assert orig.executed_action is not None
         assert pred.executed_action is not None
         assert orig.executed_action.joint_positions is not None
         assert pred.executed_action.joint_positions is not None
-        diff = orig.executed_action.joint_positions["j0"] - pred.executed_action.joint_positions["j0"]
+        diff = (
+            orig.executed_action.joint_positions["j0"] - pred.executed_action.joint_positions["j0"]
+        )
         mse_sum += diff * diff
         n += 1
 
     mse = mse_sum / max(n, 1)
     assert mse < 1e-4
 
+
+def test_sofa_smoke_pipeline(tmp_path: Path) -> None:
+    _ensure_torch_available()
+
+    root_uri = (tmp_path / "sofa_smoke").as_uri().rstrip("/") + "/"
+    source, stats, derived = run_sofa_smoke_pipeline(
+        out_root_uri=root_uri,
+        case_id="sofa_case_stage0",
+        session_id="sofa_session_stage0",
+        derived_case_id="sofa_case_stage0_derived",
+        derived_session_id="sofa_session_stage0_derived",
+        fallback_to_stub=True,
+        steps=24,
+        train_steps=64,
+        train_lr=5e-3,
+        hidden_dim=16,
+    )
+
+    assert "train_mse" in stats
+    assert frame_count_estimate(source) == 24
+    src_frames = list(iter_logged_frames(source))
+    pred_frames = list(iter_logged_frames(derived))
+    assert len(src_frames) == len(pred_frames) == 24

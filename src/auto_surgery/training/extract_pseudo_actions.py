@@ -27,7 +27,9 @@ def _vectorize_sensor_obs(sensors: SensorBundle, *, joint_keys: list[str]) -> li
     return [float(joint_positions[k]) for k in joint_keys]
 
 
-def _vectorize_action_from_vector(action_vec: list[float], *, joint_keys: list[str]) -> RobotCommand:
+def _vectorize_action_from_vector(
+    action_vec: list[float], *, joint_keys: list[str]
+) -> RobotCommand:
     if len(action_vec) != len(joint_keys):
         raise ValueError("Action vector length does not match joint_keys.")
     joint_positions = {k: float(action_vec[i]) for i, k in enumerate(joint_keys)}
@@ -53,13 +55,12 @@ def extract_pseudo_actions(
         raise ImportError("Extracting pseudo actions requires torch (train extra).") from e
 
     ckpt = load_torch_checkpoint(idm_ckpt_uri)
-    state = ckpt
-    vectorizer = state["vectorizer"]
+    vectorizer = ckpt["vectorizer"]
     joint_keys = list(vectorizer["joint_keys"])
-    obs_dim = int(state["obs_dim"])
-    act_dim = int(state["act_dim"])
-    hidden_dim = int(state.get("hidden_dim", 256))
-    model_state = state["model_state"]
+    obs_dim = int(ckpt["obs_dim"])
+    act_dim = int(ckpt["act_dim"])
+    hidden_dim = int(ckpt.get("hidden_dim", 256))
+    model_state = ckpt["model_state"]
 
     cfg = IDMConfig(obs_dim=obs_dim, act_dim=act_dim, hidden_dim=hidden_dim)
     model = build_idm_mlp(cfg)
@@ -81,7 +82,6 @@ def extract_pseudo_actions(
         segment_max_frames=256,
     )
 
-    # Preserve frame ordering and indices for sanity evaluation.
     for frame in iter_logged_frames(manifest, phi_training_allowed=False):
         obs_vec = _vectorize_sensor_obs(frame.sensor_payload, joint_keys=joint_keys)
         x = torch.tensor([obs_vec], dtype=torch.float32, device=dev)

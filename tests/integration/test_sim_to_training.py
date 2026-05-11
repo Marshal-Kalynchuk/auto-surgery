@@ -16,6 +16,7 @@ from auto_surgery.schemas.manifests import (
 )
 from auto_surgery.training.checkpoints import load_torch_checkpoint, save_torch_checkpoint_atomic
 from auto_surgery.training.datasets import frame_count_estimate, iter_logged_frames
+from auto_surgery.training.sofa_smoke import run_sofa_rollout_dataset
 
 
 def test_sim_rollout_to_dataset_loader_and_checkpoint(tmp_path: Path) -> None:
@@ -75,3 +76,19 @@ def test_sim_rollout_to_dataset_loader_and_checkpoint(tmp_path: Path) -> None:
     )
     loaded = load_torch_checkpoint(ckpt_uri)
     assert loaded["metrics"]["loss"] == 0.01
+
+
+def test_sofa_smoke_rollout_harness(tmp_path: Path) -> None:
+    root_uri = tmp_path.as_uri().rstrip("/") + "/"
+    ds = run_sofa_rollout_dataset(
+        storage_root_uri=root_uri,
+        case_id="sofa_case",
+        session_id="sofa_session",
+        fallback_to_stub=True,
+        steps=12,
+        segment_max_frames=4,
+    )
+    assert frame_count_estimate(ds) == 12
+    frames = list(iter_logged_frames(ds))
+    assert len(frames) == 12
+    assert frames[0].commanded_action is not None

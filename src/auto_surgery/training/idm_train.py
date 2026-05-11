@@ -89,10 +89,8 @@ def train_idm(
     obs_vecs: list[list[float]] = []
     act_vecs: list[list[float]] = []
     for frame in iter_logged_frames(manifest, phi_training_allowed=False):
-        if frame.executed_action is None and frame.commanded_action is None:
-            continue
         action = frame.executed_action or frame.commanded_action
-        if action.joint_positions is None:
+        if action is None or action.joint_positions is None:
             continue
         obs_vec = vectorize_sensor_to_obs(frame.sensor_payload, joint_keys=joint_keys)
         act_vec = vectorize_command_joint_positions(action, joint_keys=joint_keys)
@@ -160,8 +158,14 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(description="Train Stage-0 IDM on logged frames.")
-    p.add_argument("--dataset-manifest-uri", required=True, help="fsspec URI to DatasetManifest JSON.")
-    p.add_argument("--out-ckpt-uri", required=True, help="fsspec URI to write .pt checkpoint.")
+    p.add_argument(
+        "--dataset-manifest-uri",
+        required=True,
+        help="fsspec URI to DatasetManifest JSON.",
+    )
+    p.add_argument(
+        "--out-ckpt-uri", required=True, help="fsspec URI to write .pt checkpoint."
+    )
     p.add_argument("--steps", type=int, default=300)
     p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--hidden-dim", type=int, default=256)

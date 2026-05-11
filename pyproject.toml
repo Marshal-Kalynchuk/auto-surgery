@@ -7,7 +7,7 @@ name = "auto-surgery"
 version = "0.1.0"
 description = "Phase 0 infrastructure for autonomous neurosurgery stack (schemas, env, logging, training scaffolding)."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Neuroarm" }]
 dependencies = [
@@ -38,7 +38,7 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
 
@@ -53,7 +53,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.pyright]
-pythonVersion = "3.11"
+pythonVersion = "3.12"
 typeCheckingMode = "basic"
 reportPrivateImportUsage = false
 venvPath = "."
