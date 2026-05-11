@@ -64,6 +64,7 @@ We assert that surgical autonomy will scale only if the system can learn continu
 3. **Multi-Loop Control.** The system is organized as perception, planning, and fast control loops operating at different time scales rather than as a single monolithic policy. This makes it possible to combine millisecond-scale servoing with slower deliberation, escalation, and consolidation.
 4. **Imitation via Inverse Dynamics.** In the absence of robot action labels on archival surgical video — the gap between abundant raw video and the labeled action trajectories required for behavioral cloning, which we refer to as the *action-label gap* — the policy is bootstrapped by extracting pseudo-actions from mono surgical video using an Inverse Dynamics Model (IDM) trained in simulation, in the spirit of VPT [Baker et al., 2022]. This allows learning from large archives of human surgical video.
 5. **Separation of Reasoning and Safety.** Learned components (policy, planner, world model) handle soft reasoning, affordances, and behavior composition. An engineered safety evaluator sits between every command and the robot. Its **Layer 1** invariants are formally verified; its **Layer 2** risk surface is conformally calibrated. Clinical safety in the formally verified sense is therefore localized to Layer 1; Layer 2 provides statistical guarantees, not deterministic ones (§5.6).
+6. **Hybrid Identity + Safety Query.** Continuous embeddings carry identity and persistence under deformation/occlusion, while typed, interpretable scene-graph-style predicates carry safety constraints and auditability.
 
 ## 3. Related Work and Positioning
 
@@ -115,6 +116,18 @@ A reviewer is entitled to ask why each component is necessary. The following tab
 
 The thesis's central claim is that **structured learned control** (entities + multi-timescale memory + compositional policy + engineered safety) outperforms the cheapest baseline that achieves the same observable behavior. If any row's "falsifies thesis if …" condition is met empirically, the corresponding pillar of §2 must be revised.
 
+### 3.9 Research Findings Integration
+
+The deep-research corpus in `docs/research/architecture/research-findings.md` yields additional architecture constraints:
+
+- **Modularity and adaptability**: modular PPC stacks are the default against rigid state-machine behavior.
+- **Two-layer safety with explicit authority**: hard Layer-1 invariants plus adaptive Layer-2 risk gating are kept distinct.
+- **Identity-first, query-second representation**: embeddings are required for occlusion robustness; explicit safety predicates remain the audit surface.
+- **Loop-separation and timing contracts**: planner, safety, and servo loops remain bandwidth-separated for stability.
+- **Tiered memory with capacity-aware fallback**: Hopfield fast memory is paired with case-scale structures when retention or latency demands exceed practical limits.
+- **Action-label-gap plan**: IDM pseudo-action extraction remains the load-bearing bridge from unlabeled video to policy.
+- **Governance and HMI as first-class**: consent/de-identification/logging and takeover-state clarity are design constraints, not post-hoc process items.
+
 ## 4. Methodology: Architecture Overview
 
 The system operates as a hierarchy of loops around a shared entity knowledge store. The major system layers are:
@@ -155,6 +168,7 @@ The thesis uses a small set of formal symbols. We collect them here for referenc
 ### 4.2 Methodological Principles
 
 - **Self-supervised first:** No component requires labeled data as a first-class dependency. Annotation is a refinement, not a prerequisite.
+- **Latency contracts:** Interface contracts include explicit rates, deadlines, and deterministic arbitration requirements; adaptive or learned loops must be designed around, not over, the safety gate cadence.
 - **Embedding-first state:** Per-entity state is continuous and addressable, never reduced to discrete labels.
 - **Memory = weights and activations:** No inference-time episodic retrieval buffers for behavior-changing knowledge; memory lives in network activations, fast weights, and slow weights.
 - **Foundation models as substrate:** Use pretrained checkpoints (DINOv2, V-JEPA 2, DINO-WM) to leverage broad visual priors, bypassing the need for from-scratch training on scarce surgical data.
@@ -178,6 +192,7 @@ The thesis uses a small set of formal symbols. We collect them here for referenc
 - **Why it exists:** Surgery requires persistent handles for tools, tissue, and fluids to allow for planning, safety constraints, and surgeon communication.
 - **Why this form:** *Tumor resection illustrates why continuous state matters.* A tumor is a changing volume and risk surface, not a binary `present`/`absent` class. Continuous embeddings allow the model to learn similarity and difference along the resection trajectory. *Physically overlapping entities illustrate why per-entity decomposition is correct.* A vein draped over a tumor must be treated as two entities with different affordances (preserve vs. resect) and constraints, even if they are mechanically coupled.
 - **What can go wrong:** *Entity splitting is a known failure mode of slot attention.* A heterogeneous entity (e.g., a multi-lobed tumor) might be over-segmented into multiple slots.
+- **Occlusion stress:** During prolonged smoke/blood occlusion or abrupt re-entry, slot identity can fragment or duplicate. Memory-aware re-identification is therefore part of entity binding; unresolved identity is treated as low-confidence until reconverged.
 - **Connection:** Provides the foundational state representation consumed by all downstream learned components.
 
 ### 5.3 Entity Knowledge Store and Planner-Gated Consolidation
@@ -186,6 +201,7 @@ The thesis uses a small set of formal symbols. We collect them here for referenc
 - **Why it exists:** To accumulate patient-specific calibration (e.g., tissue compliance, bleeding tendencies) during a procedure and consolidate cross-case priors offline.
 - **Why this form:** The planner has strategic context and can decide what is worth remembering better than threshold-based event detection alone, modulating the system's attention budget in a manner loosely analogous to prefrontal modulation of memory consolidation. *Why not RAG-style retrieval?* Behavior-changing knowledge in clinical use must be subject to pre-deployment evaluation; retrieval at inference time admits unverified examples into the control loop. *Why not the Differentiable Neural Computer or Memorizing Transformer?* These provide larger working memories but do not naturally support the planner-gated, write-on-prediction-error semantics that this architecture uses to bound the write rate. They are credible fallbacks if Hopfield capacity at case length proves inadequate (§2.8 / §3.4); the interface is designed to admit a key–value memory swap.
 - **What can go wrong:** The planner might fail to consolidate critical safety-relevant interactions, leading to repeated mistakes on the same tissue. Hopfield capacity may be insufficient at full case length (open question §9).
+- **Capacity policy:** Planner writes to Hopfield are rate-limited by confidence and utility. If retrieval latency or recall precision degrades at longer case lengths, the interface supports a key-value/vector fallback path with compatible write/read semantics.
 - **Connection:** Fuses with current observations to create the full entity embedding consumed by the policy substrate and the world model.
 
 ### 5.4 Unified Embedding-Conditioned World Model
@@ -195,6 +211,7 @@ The thesis uses a small set of formal symbols. We collect them here for referenc
 - **Why this form:** Foundation-model world models learn dynamics implicitly from video, capturing soft-tissue and bleeding behaviors that analytic simulators cannot easily model. Because dynamics are conditioned on entity embeddings, the world model can infer compliance and deformation by relating SE(3)-structured action geometry to stereo-evolved surface state. The forward-pass cost is fixed by encoder shape and is not a function of underlying mesh resolution — so the per-step latency is constant in the *anatomical complexity* dimension that dominates FEM cost (cubic in mesh resolution under typical solvers); the asymptotic comparison should be read as O(1) vs. O(N³) in mesh resolution, not as a unitless O(1) claim.
 - **Why DINO-WM over alternatives:** Among comparable world models we considered Dreamer V3 [Hafner et al., 2023] (reconstructive latent), MuZero [Schrittwieser et al., 2020] (search-based planning over learned dynamics), IRIS [Micheli et al., 2023] (transformer-based), and V-JEPA 2 used directly as a predictive world model [V-JEPA 2 team, 2025]. We chose DINO-WM because it operates over the same DINOv2 features used by the perception stack, enabling a shared visual prior across perception, world model, and policy training. This is a research bet, not a settled choice; if DINO-WM fails the Stage-2 evidence threshold (§8), Dreamer V3 and V-JEPA-2-WM are the canonical comparator ablations.
 - **What can go wrong:** The model may hallucinate physically impossible deformations or fail to predict complex fluid dynamics (bleeding). Sim-to-real gap on tissue compliance is non-trivial (§2.5).
+- **Benchmark gap:** No single standardized benchmark currently spans deformation, topology change, and fluid dynamics with aligned compute-cost reporting on neurosurgical scenes; Stage-2 therefore requires an explicit stress-suite and explicit comparator protocol.
 - **Connection:** Feeds prediction errors back to the planner for memory consolidation (§5.3); provides rollouts for directive search (§5.6 SafetySurface) and for the policy substrate (§5.5).
 
 ### 5.5 Compositional Policy Substrate
@@ -212,6 +229,7 @@ The thesis uses a small set of formal symbols. We collect them here for referenc
 - **What it does:** Two phases at different rates form an asymmetric guard. Phase 1 (async assessment, 10–20 Hz) computes deformation-aware no-go geometry $\mathcal{N}*t$ and a per-entity risk surface $r$, publishing a SafetySurface $\mathcal{S}t$. Phase 2 (sync command gate, 100–500 Hz) checks every command against $\mathcal{S}t$ and a set of Layer 1 physical invariants. The evaluator induces a safe action manifold $\mathcal{M}{\text{safe}, t} \subset \mathcal{A}$. Any proposed $a_t \notin \mathcal{M}{\text{safe}, t}$ is either projected, $a_t' = \text{Proj}*{\mathcal{M}_{\text{safe}, t}}(a_t)$, or — if no admissible projection exists — replaced by a hard stop $\bot$.
 - **SafetySurface representation.** $\mathcal{S}_t$ is implemented as a per-entity signed distance field over the workspace, augmented with a scalar risk score $r \in [0,1]$ and an associated nominal coverage level. The no-go geometry $\mathcal{N}_t$ is the sublevel set $x \in \mathbb{R}^3 : r(x) > \alpha$ at the deployed risk threshold $\alpha$, expanded by a deformation-aware halo derived from world-model rollouts.
 - **Layer 1 (formally verified, engineered).** Hard physical invariants — workspace bounds, joint limits, force ceilings, stop-on-fault — are expressed as decidable predicates over robot state. These are formally verified using techniques compatible with the Simplex / runtime-assurance architecture [Sha, 2001]; they correspond to the Control Barrier Function [Ames et al., 2019] and Hamilton–Jacobi reachability [Bansal et al., 2017] traditions and provide the same kind of deterministic guarantee. Surgeon-set virtual fixtures [Abbott et al., 2007; Bowyer et al., 2014] are admitted as Layer 1 spatial bounds.
+- **Audit and e-stop semantics:** Safety events are timestamped with explicit action provenance for post-op traceability. Emergency-stop transitions and arbitration decisions must remain reconstructable and are designed to terminate motion in a bounded safe state.
 - **Layer 2 (learned, conformally calibrated).** The risk score $r$ over the workspace is computed from world-model rollouts of the policy's action samples. To avoid heuristic thresholds, we apply conformal prediction [Vovk et al., 2005; Angelopoulos & Bates, 2021]: a held-out calibration set of (rollout, observed outcome) pairs yields non-conformity scores from which a quantile threshold is computed for a target nominal coverage (e.g., $1 - \alpha = 0.95$). At inference, only candidate actions whose worst-case predicted deformation lies within the conformal envelope are admitted. The surgical setting is non-stationary; we follow the covariate-shift-aware variants of conformal prediction [Tibshirani et al., 2019] and the safe-control adaptations [Lindemann et al., 2023], explicitly track sliding-window calibration during a case, and treat distribution-shift coverage as an open empirical question (§9, §4.5). A separate safety-calibration protocol will specify the details; until that protocol is established, Layer 2 is *advisory*, not vetoing, on novel tissue distributions.
 - **Why it exists:** To provide deterministic guarantees on Layer 1 invariants and statistically calibrated guarantees on the Layer 2 risk surface, without coupling either to policy optimization.
 - **Why this form vs. CBFs, HJ reachability, or pure virtual fixtures:** Hand-designed Control Barrier Functions and Hamilton–Jacobi value functions provide rigorous safety guarantees but are difficult to specify directly over a deformable, partially observed surgical scene with shifting topology. Static virtual fixtures cannot represent deformation-aware no-go zones that move with the tissue. Our approach **does not replace these methods**; it composes with them. Layer 1 is structurally a Simplex-style supervisor with CBF-like invariants over robot state; Layer 2 lifts the same idea to a high-dimensional, learned, conformally calibrated envelope over workspace risk. The empirical claim in §7 is that the Layer 1 + Layer 2 composition produces tighter, more useful no-go geometry than any of the individual classical methods alone on a defined task suite.
@@ -229,6 +247,7 @@ The thesis uses a small set of formal symbols. We collect them here for referenc
 
 - **What it does:** Provides the shared autonomy interface enabling the surgeon to inject Layer 1 constraints (workspace bounds, virtual fixtures) and behavior contracts $\mathcal{C}$, issue directives $\mathcal{D}$, and execute a graceful mechanical handover when the Phase 2 sync gate triggers a hard stop.
 - **Why it exists:** Clinical safety at Levels 2–3 (§1.5) requires the operating surgeon to remain the ultimate authority. The architecture supports shared control without abrupt impedance discontinuities at transition.
+- **Handover protocol:** Before automation begins a step, the system provides an explicit intent preview and requires surgeon acknowledgment. During take-over requests, the interface presents multimodal cues (visual + audible + haptic) and state-lock indicators to prevent authority ambiguity and reduce transients.
 - **What can go wrong:** Handover discontinuities can introduce force transients; surgeon-injected directives may conflict with active contracts (conflict resolution policy must be specified).
 - **Connection:** Source of Layer 1 spatial bounds for the safety evaluator (§5.6) and of directives consumed by the policy substrate (§5.5).
 
@@ -260,12 +279,25 @@ The thesis is structured to be falsifiable both at the level of individual load-
 
 ### 7.1 Component-level falsifiable claims
 
+The evaluation protocol is architecture-level and module-specific: each load-bearing claim is tied to an ablation hypothesis and a stopping condition rather than a post-hoc optimization result.
+
 1. **IDM transfer accuracy.** *Claim:* Pseudo-actions (Δ tool pose, gripper state) extracted by an inverse-dynamics model trained in SOFA simulation are sufficiently aligned with expert surgeon kinematics to support behavioral cloning. *Validation:* Per-frame RMSE on Δ translation (mm), Δ rotation (rad), and gripper state, and per-sequence DTW distance, against ground-truth actions on robot-collected surgical sessions; concrete thresholds in §3.1. *Falsification:* RMSE > 4× inter-surgeon variance baseline or correlation < 0.3 — see the "weak" gate in §3.1.
 2. **Foundation-model surgical specificity.** *Claim:* DINOv2 and V-JEPA 2 features, lightly fine-tuned on surgical video, support stable variable-cardinality entity binding and downstream task heads. *Validation:* Tracking stability and segmentation quality on surgical benchmarks such as SurgT, EndoVis, Cholec80, and CATARACTS. **Threshold caveat.** The expectation we work toward is *EAO ≥ 0.6 and DSC ≥ 0.85* on a defined evaluation suite; these numbers should be read as engineering targets adopted from common practice on adjacent surgical benchmarks, not as claims about clinical outcomes. Linking these targets rigorously to clinical endpoints (e.g., margin-safe resection rate) requires a formal outcome study and is explicitly out of scope for this thesis. *Falsification:* Sustained EAO < 0.4 or DSC < 0.7 after the fine-tuning protocol.
 3. **Compositional generalization.** *Claim:* The policy substrate executes novel combinations of language directives that are unseen as combinations during training, on a defined directive grammar. *Validation:* Zero-shot success rate on held-out directive combinations in simulation and on phantoms (FLS peg transfer, JIGSAWS-style suturing, then neurosurgical phantom tasks). *Falsification:* Held-out compositional success indistinguishable from per-directive memorization; the policy's compositional generalization curve fails to rise above a behavioral-cloning baseline trained on the same data without language conditioning.
 4. **Safety evaluator reliability.** *Claim (Layer 1):* Layer 1 invariants admit a formal verification proof (workspace bounds, joint limits, force ceilings, deadline-bounded stop). *Validation:* Theorem-prover or model-checker proof against the published predicate set; surrogate empirical validation by adversarial-policy fuzzing. *Claim (Layer 2):* The conformally calibrated SafetySurface attains its nominal coverage on a held-out calibration distribution, with quantified degradation under defined distribution shift. *Validation:* Empirical coverage vs. nominal, per §4.5. *Falsification:* Verified failure of any Layer 1 predicate under the published threat model; or empirical Layer 2 coverage substantially below nominal under in-distribution evaluation. The thesis explicitly **does not** claim "zero safety violations" as an absolute; it claims (a) zero observed violations of Layer 1 invariants under the specified adversarial protocol, and (b) statistical coverage at a stated confidence on Layer 2.
 
-### 7.2 Falsifiability
+### 7.2 Falsification protocol and stage gates
+
+Component claims in this thesis are treated as load-bearing until disproven by pre-registered ablations. For each claim:
+
+- We define an explicit falsifiable hypothesis with a clinically meaningful MCID (for example TRE, force-threshold violations, insertion error, or compositional failure rate).
+- We run ablations by toggling or replacing one module at a time while holding all non-target components constant.
+- We apply transparent stopping rules (efficacy, futility, safety) to avoid post-hoc interpretation and to prevent repeated-risk testing without clear evidence gain.
+- If Layer 1 cannot be preserved under a hypothesis at the specified risk bound, downstream evidence is blocked and the architectural decision is revisited.
+
+This converts non-improvements into strong negative evidence instead of anecdote and keeps the thesis behaviorally falsifiable throughout staging.
+
+### 7.3 Falsifiability
 
 The central claim of §2 is that **structured learned control** outperforms the cheapest baseline in the §3.8 table that achieves the same observable behavior. The thesis is falsified at the architectural level if any of the following obtains:
 
@@ -273,7 +305,7 @@ The central claim of §2 is that **structured learned control** outperforms the 
 - A skill-library autonomy stack matches the proposed system's compositional generalization and OOD handling on a defined neurosurgical task suite within a fixed engineering budget. (This is the §3.8 row #2 falsifier.)
 - Pseudo-action extraction (the §7.1 claim 1) reaches the "weak" gate of §3.1 and no alternative supervision route (e.g., contract-based RL in sim, action-conditioned VLA on surgical video) recovers the lost training signal — in which case the imitation-from-IDM pillar of §2 is broken and the architecture must be redesigned.
 
-### 7.3 Evaluation-suite alignment with prior benchmarks
+### 7.4 Evaluation-suite alignment with prior benchmarks
 
 Where possible, the validation harnesses align with public surgical datasets and tasks (FLS peg transfer, JIGSAWS suturing, Cholec80 phase recognition, CATARACTS, EndoVis tool tracking, SurgT soft-tissue tracking) so that component-level performance is comparable to the wider community's baselines. Neurosurgery-specific tasks beyond these are considered novel and require purpose-built phantom or cadaveric protocols whose specification is part of the Stage-4 / Stage-5 deliverable (§8).
 
@@ -325,6 +357,14 @@ The architecture relies on several open research bets that are tracked, but not 
 - **Conformal coverage under distribution shift.** Layer 2 coverage guarantees in non-stationary surgical scenes — what is the calibration-set composition, sliding-window protocol, and degradation profile under defined shift? (§4.5, deliverable: safety-calibration protocol)
 - **Cross-component gradient flow.** Are modules trained jointly, in stages, or end-to-end fine-tuned? Stability tradeoffs are unspecified. (§4.4)
 - **Data contract.** How many hours of surgical video, across how many procedures and centers, are required for the policy substrate to reach Stage-3 evidence thresholds? (§4.3)
+
+### 9.8 Standards-driven evaluation discipline
+
+Research findings now require evaluation discipline for every ablation. The thesis explicitly ties architectural decisions to:
+
+- Risk-aware ablation protocols with pre-specified hypotheses and MCID thresholds.
+- Benchmarks and task suites that include phantoms, simulation stressors, and metrics aligned to neurosurgical failure modes.
+- Publication-ready documentation standards (ARRIVE, SPIRIT-AI, CONSORT-AI, and DECIDE-AI where applicable), so negative findings (non-necessity of a module) are also treated as valid disproof outcomes.
 
 ## 10. Limitations and Threats to Validity
 
