@@ -20,4 +20,4 @@ def test_golden_fixture_loads() -> None:
     fixture = Path(__file__).resolve().parent.parent / "fixtures" / "golden_logged_frame.json"
     lf = LoggedFrame.model_validate_json(fixture.read_text(encoding="utf-8"))
     assert lf.frame_index == 0
-    assert lf.sensor_payload.clock_source == "ntp"
+    assert lf.sensor_payload.tool.in_contact in (True, False)

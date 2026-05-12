@@ -16,7 +16,6 @@ uv run auto-surgery run-one-episode \
   --case-id brain_poc \
   --session-id ep_${SLURM_ARRAY_TASK_ID} \
   --sofa-scene-path /path/to/brain_dejavu_forceps_poc.scn \
-  --stub false \
   --rgb \
   --steps 128
 ```

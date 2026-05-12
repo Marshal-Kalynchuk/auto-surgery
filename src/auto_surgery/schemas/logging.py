@@ -39,7 +39,7 @@ class LoggedFrame(BaseModel):
     frame_index: int
     timestamp_ns: int
     sensor_payload: SensorBundle
-    scene_snapshot: SceneGraph
+    scene_snapshot: SceneGraph | None = None
     commanded_action: RobotCommand | None = None
     executed_action: RobotCommand | None = None
     safety_decision: SafetyDecision | None = None

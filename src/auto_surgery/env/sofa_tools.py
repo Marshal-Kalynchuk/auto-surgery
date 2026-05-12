@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.schemas.commands import ControlMode
 
 
 def _set_translation(ogl_model: Any, translation: tuple[float, float, float]) -> bool:
@@ -71,14 +72,22 @@ def build_forceps_action_applier(
     cached_visual: dict[str, Any | None] = {"node": None}
 
     def _apply_action(scene: Any, action: RobotCommand) -> None:
+        if cached_visual["node"] is None:
+            cached_visual["node"] = _resolve_forceps_visual(scene)
+        if cached_visual["node"] is None:
+            return
+        if action.control_mode == ControlMode.CARTESIAN_TWIST:
+            if action.cartesian_twist is None:
+                return
+            _set_translation(
+                cached_visual["node"],
+                (x_base + action.cartesian_twist.linear.x * scale, y, z),
+            )
+            return
         if action.joint_positions is None:
             return
         j0 = action.joint_positions.get("j0")
         if j0 is None:
-            return
-        if cached_visual["node"] is None:
-            cached_visual["node"] = _resolve_forceps_visual(scene)
-        if cached_visual["node"] is None:
             return
         _set_translation(
             cached_visual["node"],
@@ -88,22 +97,26 @@ def build_forceps_action_applier(
     return _apply_action
 
 
-def _stub_tool(tool: str) -> Callable[..., Callable[[Any, RobotCommand], None]]:
+def _unsupported_tool(tool: str) -> Callable[..., Callable[[Any, RobotCommand], None]]:
     def build(**_kwargs: Any) -> Callable[[Any, RobotCommand], None]:
         raise NotImplementedError(
-            f"SOFA tool {tool!r} is registered for future work but is not implemented."
+            f"SOFA tool {tool!r} is planned and currently not implemented."
         )
 
     return build
 
 
-TOOL_REGISTRY: dict[str, Callable[..., Callable[[Any, RobotCommand], None]]] = {
+IMPLEMENTED_TOOL_REGISTRY: dict[str, Callable[..., Callable[[Any, RobotCommand], None]]] = {
     "forceps": build_forceps_action_applier,
-    "scissors": _stub_tool("scissors"),
-    "scalpel": _stub_tool("scalpel"),
-    "needle": _stub_tool("needle"),
 }
 
+PLANNED_TOOL_REGISTRY: dict[str, Callable[..., Callable[[Any, RobotCommand], None]]] = {
+    "scissors": _unsupported_tool("scissors"),
+    "scalpel": _unsupported_tool("scalpel"),
+    "needle": _unsupported_tool("needle"),
+}
+
+TOOL_REGISTRY = {**IMPLEMENTED_TOOL_REGISTRY, **PLANNED_TOOL_REGISTRY}
 
 def resolve_tool_action_applier(tool_id: str, **kwargs: Any) -> Callable[[Any, RobotCommand], None]:
     """Return an action applier callable for ``tool_id``."""

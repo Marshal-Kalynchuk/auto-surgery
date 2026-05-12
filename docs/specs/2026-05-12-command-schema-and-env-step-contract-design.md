@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-05-12 |
-| Status | Approved (design); implementation pending |
+| Status | Approved (design); implementation complete |
 | Piece | 1 of 5 (in the simulation-pipeline redesign) |
 | Supersedes | `src/auto_surgery/schemas/commands.py`, `src/auto_surgery/schemas/results.py`, `src/auto_surgery/schemas/sensors.py`, and the `Environment` protocol stub in `docs/library/ARCHITECTURE.md` §8.1 |
 | Backward compatibility | **None.** All callers migrate. |
@@ -294,6 +294,18 @@ class Environment(Protocol):
 
 `reset(config)` returns the initial state as a capture tick: `sim_step_index = 0`, `is_capture_tick = True`, `dt = 0.0`, sensors fully populated, `cameras[*].frame_rgb` rendered.
 
+### 5.7.1 Runtime conformance checklist
+
+Use this as a minimal regression anchor for the piece-1 contract:
+
+- `env.reset(config)` sets `sim_step_index == 0`, `is_capture_tick == True`, and `dt == 0.0`.
+- `env.reset(config)` writes `control_rate_hz` through to backend step cadence (`StepResult.dt == 1 / config.control_rate_hz` on the next accepted tick).
+- `is_capture_tick` transitions follow `frame_decimation = round(control_rate_hz / frame_rate_hz)`.
+- On non-capture ticks, `StepResult.sensors.cameras[*].frame_rgb is None`; on capture ticks, frame payload is preserved.
+- `stale_cycle_id` and `enabled=False` must both map to `command_blocked=True`, with `block_reason` set to the triggering cause and `cycle_id_echo == command.cycle_id`.
+- `motion_enabled` must equal `command.enable and not command_blocked` for both real and stub backends.
+- Blocked commands must be converted to deterministic no-op `ControlMode.CARTESIAN_TWIST` payloads at the env boundary.
+
 ---
 
 ## 6. Env-step contract (per-tick invariants)
@@ -402,7 +414,21 @@ Migration is a single commit per piece, not a rolling deprecation. Callers updat
 
 ---
 
-## 12. Pointer to piece 2
+## 12. Implementation completion checklist
+
+- `RobotCommand` now requires `cycle_id`, `enable`, and mode-specific payloads; legacy free-form fields removed.
+- `StepResult` is the only per-tick contract shape from env reset/step, exposing `sensors`, `dt`, `sim_step_index`, and `is_capture_tick`.
+- `SofaEnvironment` and protocol surface now own the tick order and gating boundary (`stale_cycle_id`, `disabled`) and propagate `SafetyStatus`.
+- Runtime backends populate typed `SensorBundle` directly; legacy payload buckets (`scene`, `modalities`, `sensor_observation`, `info`) are not part of step outputs.
+- Downstream rollouts/trainers now consume `step.sensors` and read scene snapshots via `env.get_scene()`.
+
+### Known deferrals
+
+- Command-to-safety conversions outside env (bridge-side, transport, and real-time transport jitter handling).
+- `CARTESIAN_FORCE` as a first-class control mode.
+- Contact-rich force-specific force metrics beyond `ToolState.wrench` and `Contact`.
+
+## 13. Pointer to piece 2
 
 `RobotCommand(CARTESIAN_TWIST in CAMERA)` is meaningless until the forceps becomes a rigid body that can be commanded and that interacts with the brain FEM. Piece 2 — **Physical forceps in SOFA** — replaces the current `OglModel`-only `Forceps` node with:
 

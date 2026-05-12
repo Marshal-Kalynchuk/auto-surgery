@@ -50,7 +50,6 @@ ds = run_sofa_rollout_dataset(
     case_id="stage0_case",
     session_id="stage0_session",
     sofa_scene_path="file:///tmp/sofa_scenes/needle_env.scene",
-    fallback_to_stub=False,
     steps=64,
     seed=7,
 )
@@ -58,7 +57,7 @@ print("dataset", ds.model_dump_json())
 PY
 ```
 
-If SOFA bindings are not yet wired in your environment, keep local development running with stub fallback:
+To validate with a different scene input during setup:
 
 ```bash
 uv run python - <<'PY'
@@ -67,16 +66,16 @@ from auto_surgery.training.sofa_smoke import run_sofa_rollout_dataset
 root_uri = "file:///tmp/auto-surgery-sofa-smoke/"
 ds = run_sofa_rollout_dataset(
     storage_root_uri=root_uri,
-    case_id="stage0_case_stub",
-    session_id="stage0_session_stub",
-    fallback_to_stub=True,
+    case_id="stage0_case_alt",
+    session_id="stage0_session_alt",
+    sofa_scene_path="file:///tmp/auto-surgery-sofa-scene-alternate.scn",
     steps=32,
 )
 print("dataset", ds.model_dump_json())
 PY
 ```
 
-Run the full smoke (rollout -> dataset -> IDM -> pseudo-action) once SOFA or stub is selected:
+Run the full smoke (rollout -> dataset -> IDM -> pseudo-action):
 
 ```bash
 uv run python - <<'PY'
@@ -88,7 +87,6 @@ run_sofa_smoke_pipeline(
     session_id="sofa_session",
     derived_case_id="sofa_case_derived",
     derived_session_id="sofa_session_derived",
-    fallback_to_stub=False,
     steps=24,
 )
 PY
@@ -106,14 +104,14 @@ PY
    - `uv run pyright`
 4. Contract/integration coverage:
    - `uv run pytest tests/env/test_contract.py tests/integration/test_sim_to_training.py tests/integration/test_idm_stage0.py`
-5. SOFA or stub smoke dataset evidence:
+5. SOFA smoke dataset evidence:
    - Run `run_sofa_rollout_dataset(...)`
    - Ensure `frame_count_estimate` equals the requested rollout length.
    - Confirm session manifest path appears in returned `DatasetManifest`.
 6. Training handoff evidence:
    - Keep the `train_idm` output metrics dictionary and `CheckpointManifest` on disk.
    - Compare source and derived datasets: frame count parity + aligned `frame_index`.
-   - Keep command vectors/`command_echo` parity for the same joint key set (`j0` at Stage-0).
+   - Keep commanded/executed action parity for the same joint key set (`j0` at Stage-0).
 
 ## CLI entrypoints (single surface)
 

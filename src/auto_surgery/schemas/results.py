@@ -1,18 +1,18 @@
-"""Environment step results (architecture §8.3.2)."""
+"""Environment step results."""
 
-from typing import Any
+from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from auto_surgery.schemas.scene import SceneGraph
 from auto_surgery.schemas.sensors import SensorBundle
 
 
 class StepResult(BaseModel):
-    """Return type of Environment.step."""
+    """Deterministic outcome of a single env step."""
 
     model_config = {"extra": "forbid"}
 
-    next_scene: SceneGraph
-    sensor_observation: SensorBundle
-    info: dict[str, Any] = Field(default_factory=dict)
+    sensors: SensorBundle
+    dt: float
+    sim_step_index: int
+    is_capture_tick: bool

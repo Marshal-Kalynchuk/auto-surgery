@@ -8,7 +8,7 @@ from typing import Any
 from auto_surgery.env.action_generators import (
     ActionGenerator,
     build_default_action_generator,
-    build_sine_joint_command,
+    build_sine_twist_command,
 )
 from auto_surgery.env.capture import CaptureModality
 from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_brain_forceps_scene_path
@@ -29,6 +29,7 @@ from auto_surgery.schemas.manifests import (
     RetentionTier,
     RunMetadata,
     SceneConfig,
+    DomainRandomizationConfig,
 )
 from auto_surgery.training.datasets import frame_count_estimate
 from auto_surgery.training.extract_pseudo_actions import extract_pseudo_actions
@@ -39,12 +40,11 @@ def build_lite_command(
     step_index: int, *, base_ns: int = 1_000_000, amplitude: float = 0.05
 ) -> RobotCommand:
     """Generate a deterministic 1-joint command for smoke trajectories."""
-    return build_sine_joint_command(
+    return build_sine_twist_command(
         step_index,
         base_ns=base_ns,
-        amplitude=amplitude,
+        linear_amplitude=amplitude,
         phase_scale=0.1,
-        joint_key="j0",
     )
 
 
@@ -54,7 +54,6 @@ def run_sofa_rollout_dataset(
     case_id: str,
     session_id: str,
     sofa_scene_path: str | None = None,
-    fallback_to_stub: bool = True,
     steps: int = 64,
     segment_max_frames: int = 128,
     seed: int = 7,
@@ -74,28 +73,43 @@ def run_sofa_rollout_dataset(
         cfg.setdefault("seed", seed)
         gen = build_default_action_generator(cfg)
     modalities = list(capture_modalities or [])
-    active_modalities = modalities if (modalities and not fallback_to_stub) else []
-    sensor_names = ["command_echo", *[m.modality_id() for m in active_modalities]]
-    pre_init_hooks: list[Callable[[Any, EnvConfig], None]] = [
-        hook
-        for hook in [getattr(cap, "pre_init_hook", None) for cap in active_modalities]
-        if callable(hook)
-    ]
+    active_modalities = modalities
+    sensor_names = [m.modality_id() for m in active_modalities]
+    pre_init_hooks = (
+        [
+            cap.pre_init_hook
+            for cap in active_modalities
+            if callable(getattr(cap, "pre_init_hook", None))
+        ]
+        if active_modalities
+        else []
+    )
+    backend_factory = sofa_backend_factory
     resolved_scene_path = (
         resolve_brain_forceps_scene_path(sofa_scene_path)
         if sofa_scene_path is not None
         else None
     )
-
     env = SofaEnvironment(
         sofa_scene_path=resolved_scene_path,
         sofa_scene_factory=sofa_scene_factory,
         scene_config=scene_config,
-        fallback_to_stub=fallback_to_stub,
-        sofa_backend_factory=sofa_backend_factory,
+        sofa_backend_factory=backend_factory,
         pre_init_hooks=pre_init_hooks or None,
     )
-    env.reset(EnvConfig(seed=seed, domain_randomization=domain_randomization or {}))
+    randomization_payload = (
+        domain_randomization or {}
+    )
+    env.reset(
+        EnvConfig(
+            seed=seed,
+            domain_randomization=(
+                randomization_payload
+                if isinstance(randomization_payload, DomainRandomizationConfig)
+                else DomainRandomizationConfig(spatial_variation=randomization_payload)
+            ),
+        )
+    )
     needs_native_rgb = any(
         cap.modality_id() == "rgb" for cap in active_modalities
     )
@@ -119,30 +133,20 @@ def run_sofa_rollout_dataset(
     for i in range(steps):
         cmd = gen.next_command(step_index=i, timestamp_ns=1_000_000 + i)
         step = env.step(cmd)
-        bundle_modalities = dict(step.sensor_observation.modalities)
         if active_modalities:
             scene_root = env.sofa_scene_root
             for cap in active_modalities:
                 payload = cap.capture(root_node=scene_root, step_index=i)
                 if payload.get("implemented") is False:
-                    bundle_modalities[cap.modality_id()] = payload
                     continue
                 raw = payload.get("bytes")
                 if isinstance(raw, bytes) and raw:
-                    rel = writer.write_blob(f"{cap.modality_id()}/{i:06d}.png", raw)
-                    bundle_modalities[cap.modality_id()] = {
-                        "blob_relative_path": rel,
-                        "encoding": str(payload.get("encoding", "application/octet-stream")),
-                    }
-        step_obs = step.sensor_observation.model_copy(
-            update={"modalities": bundle_modalities},
-            deep=True,
-        )
+                    writer.write_blob(f"{cap.modality_id()}/{i:06d}.png", raw)
         lf = LoggedFrame(
             frame_index=i,
             timestamp_ns=cmd.timestamp_ns,
-            sensor_payload=step_obs,
-            scene_snapshot=step.next_scene,
+            sensor_payload=step.sensors,
+            scene_snapshot=env.get_scene(),
             commanded_action=cmd,
             executed_action=cmd,
             safety_decision=None,
@@ -157,7 +161,7 @@ def run_sofa_rollout_dataset(
     run_meta = RunMetadata(
         software_git_sha="stage0",
         steps_requested=steps,
-        fallback_to_stub=fallback_to_stub,
+        fallback_to_stub=False,
         sofa_scene_path=sofa_scene_path,
         sofa_scene_id=scene_config.scene_id if scene_config else None,
         sofa_tool_id=scene_config.tool_id if scene_config else None,
@@ -182,7 +186,10 @@ def run_sofa_smoke_pipeline(
     session_id: str,
     derived_case_id: str,
     derived_session_id: str,
-    fallback_to_stub: bool = True,
+    sofa_scene_path: str | None = None,
+    sofa_backend_factory: SofaRuntimeBackendFactory | None = None,
+    sofa_scene_factory: SofaSceneFactory | None = None,
+    scene_config: SceneConfig | None = None,
     steps: int = 64,
     train_steps: int = 64,
     train_lr: float = 5e-3,
@@ -195,7 +202,10 @@ def run_sofa_smoke_pipeline(
         storage_root_uri=base_root,
         case_id=case_id,
         session_id=session_id,
-        fallback_to_stub=fallback_to_stub,
+        sofa_scene_path=sofa_scene_path,
+        sofa_backend_factory=sofa_backend_factory,
+        sofa_scene_factory=sofa_scene_factory,
+        scene_config=scene_config,
         steps=steps,
     )
     assert frame_count_estimate(src_ds) == steps

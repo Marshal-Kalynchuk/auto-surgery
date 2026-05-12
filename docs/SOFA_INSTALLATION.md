@@ -1,10 +1,8 @@
 # SOFA Installation & POC Runtime Notes
 
 This repository uses **SOFA** (Simulation Open Framework Architecture) via the adapter in `src/auto_surgery/env/sofa.py`.
-The Stage-0 workflows support both:
-
-- **Stub mode** (`fallback_to_stub=True`): deterministic placeholder simulation (fast, works anywhere).
-- **Non-stub mode** (`fallback_to_stub=False`): loads a real SOFA scene from disk and steps it through the SOFA runtime bindings.
+The Stage-0 workflow steps SOFA scenes through the SOFA runtime for deterministic
+dataset generation and IDM smoke coverage.
 
 ## 0. One-time SOFA environment setup
 
@@ -127,7 +125,6 @@ run_sofa_rollout_dataset(
     case_id="dejavu_case",
     session_id="dejavu_session",
     sofa_scene_path="$REPO_ROOT/src/auto_surgery/env/sofa_scenes/brain_dejavu_forceps_poc.scn",
-    fallback_to_stub=False,
     steps=8,
     seed=7,
 )
@@ -157,9 +154,9 @@ If screenshot capture fails:
 - Confirm you can run an environment bootstrap:
   - `source .env.sofa`
 
-## 4. Stub mode for development
+## 4. Alternate smoke scene handles
 
-To develop without SOFA bindings or rendering support:
+To run against alternate scene handles during setup or experimentation:
 
 ```bash
 cd "$REPO_ROOT"
@@ -169,9 +166,9 @@ from auto_surgery.training.sofa_smoke import run_sofa_rollout_dataset
 root_uri = "file:///tmp/auto-surgery-sofa-smoke/"
 run_sofa_rollout_dataset(
     storage_root_uri=root_uri,
-    case_id="sofa_case_stub",
-    session_id="sofa_session_stub",
-    fallback_to_stub=True,
+    case_id="sofa_case_alt",
+    session_id="sofa_session_alt",
+    sofa_scene_path="file:///tmp/auto-surgery-sofa-scene-alternate.scn",
     steps=12,
 )
 print("ok")

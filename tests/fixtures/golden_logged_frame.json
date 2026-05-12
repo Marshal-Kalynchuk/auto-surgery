@@ -4,9 +4,44 @@
   "timestamp_ns": 42,
   "sensor_payload": {
     "timestamp_ns": 42,
-    "clock_source": "ntp",
-    "modalities": {
-      "kinematics": {"joint_0": 0.0}
+    "sim_time_s": 0.0,
+    "tool": {
+      "pose": {
+        "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "rotation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}
+      },
+      "twist": {
+        "linear": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "angular": {"x": 0.0, "y": 0.0, "z": 0.0}
+      },
+      "jaw": 0.0,
+      "wrench": {"x": 0.0, "y": 0.0, "z": 0.0},
+      "in_contact": false
+    },
+    "cameras": [
+      {
+        "camera_id": "golden_cam",
+        "timestamp_ns": 42,
+        "extrinsics": {
+          "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+          "rotation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}
+        },
+        "intrinsics": {
+          "fx": 1.0,
+          "fy": 1.0,
+          "cx": 0.0,
+          "cy": 0.0,
+          "width": 1,
+          "height": 1
+        },
+        "frame_rgb": null
+      }
+    ],
+    "safety": {
+      "motion_enabled": false,
+      "command_blocked": false,
+      "block_reason": null,
+      "cycle_id_echo": -1
     }
   },
   "scene_snapshot": {

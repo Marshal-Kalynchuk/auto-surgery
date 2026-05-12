@@ -5,35 +5,55 @@ from __future__ import annotations
 from auto_surgery.logging.storage import session_manifest_path
 from auto_surgery.logging.writer import SessionWriter
 from auto_surgery.models.idm import IDMConfig, build_idm_mlp
-from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.schemas.commands import ControlMode, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.logging import LoggedFrame
 from auto_surgery.schemas.manifests import DatasetManifest
-from auto_surgery.schemas.sensors import SensorBundle
 from auto_surgery.training.checkpoints import load_torch_checkpoint
 from auto_surgery.training.datasets import iter_logged_frames
 
 
-def _vectorize_sensor_obs(sensors: SensorBundle, *, joint_keys: list[str]) -> list[float]:
-    modalities = sensors.modalities
-    cmd_echo = modalities.get("command_echo")
-    if not isinstance(cmd_echo, dict):
-        raise ValueError("Stage-0 extract expects sensors.modalities['command_echo'] to be a dict.")
-    joint_positions = cmd_echo.get("joint_positions")
-    if not isinstance(joint_positions, dict):
-        raise ValueError("Stage-0 extract expects command_echo['joint_positions'] to be a dict.")
-    missing = [k for k in joint_keys if k not in joint_positions]
+def _vectorize_sensor_obs(command: RobotCommand, *, twist_keys: list[str]) -> list[float]:
+    if command.cartesian_twist is None:
+        raise ValueError("Stage-0 extract expects an action with cartesian_twist.")
+    values = {
+        "cartesian_twist.linear.x": command.cartesian_twist.linear.x,
+        "cartesian_twist.linear.y": command.cartesian_twist.linear.y,
+        "cartesian_twist.linear.z": command.cartesian_twist.linear.z,
+        "cartesian_twist.angular.x": command.cartesian_twist.angular.x,
+        "cartesian_twist.angular.y": command.cartesian_twist.angular.y,
+        "cartesian_twist.angular.z": command.cartesian_twist.angular.z,
+    }
+    missing = [key for key in twist_keys if key not in values]
     if missing:
-        raise ValueError(f"command_echo joint_positions missing keys: {missing}")
-    return [float(joint_positions[k]) for k in joint_keys]
+        raise ValueError(f"action cartesian_twist missing keys: {missing}")
+    return [float(values[key]) for key in twist_keys]
 
 
 def _vectorize_action_from_vector(
-    action_vec: list[float], *, joint_keys: list[str]
+    action_vec: list[float], *, cycle_id: int, twist_keys: list[str]
 ) -> RobotCommand:
-    if len(action_vec) != len(joint_keys):
-        raise ValueError("Action vector length does not match joint_keys.")
-    joint_positions = {k: float(action_vec[i]) for i, k in enumerate(joint_keys)}
-    return RobotCommand(timestamp_ns=0, joint_positions=joint_positions, representation="joint")
+    if len(action_vec) != len(twist_keys):
+        raise ValueError("Action vector length does not match twist_keys.")
+    key_by_index = dict(zip(twist_keys, action_vec))
+    linear = Vec3(
+        x=key_by_index.get("cartesian_twist.linear.x", 0.0),
+        y=key_by_index.get("cartesian_twist.linear.y", 0.0),
+        z=key_by_index.get("cartesian_twist.linear.z", 0.0),
+    )
+    angular = Vec3(
+        x=key_by_index.get("cartesian_twist.angular.x", 0.0),
+        y=key_by_index.get("cartesian_twist.angular.y", 0.0),
+        z=key_by_index.get("cartesian_twist.angular.z", 0.0),
+    )
+    twist = Twist(linear=linear, angular=angular)
+    return RobotCommand(
+        timestamp_ns=0,
+        cycle_id=cycle_id,
+        control_mode=ControlMode.CARTESIAN_TWIST,
+        cartesian_twist=twist,
+        enable=True,
+        source="idm",
+    )
 
 
 def extract_pseudo_actions(
@@ -56,7 +76,12 @@ def extract_pseudo_actions(
 
     ckpt = load_torch_checkpoint(idm_ckpt_uri)
     vectorizer = ckpt["vectorizer"]
-    joint_keys = list(vectorizer["joint_keys"])
+    if "twist_keys" not in vectorizer:
+        raise RuntimeError(
+            "IDM checkpoint is missing twist_keys vectorizer metadata; "
+            "expected `vectorizer.twist_keys` for CARTESIAN_TWIST models."
+        )
+    twist_keys = list(vectorizer["twist_keys"])
     obs_dim = int(ckpt["obs_dim"])
     act_dim = int(ckpt["act_dim"])
     hidden_dim = int(ckpt.get("hidden_dim", 256))
@@ -83,11 +108,18 @@ def extract_pseudo_actions(
     )
 
     for frame in iter_logged_frames(manifest, phi_training_allowed=False):
-        obs_vec = _vectorize_sensor_obs(frame.sensor_payload, joint_keys=joint_keys)
+        action_for_obs = frame.executed_action or frame.commanded_action
+        if action_for_obs is None:
+            raise ValueError(
+                f"Frame {frame.frame_index} has no commanded/executed action for stage-0 extraction."
+            )
+        obs_vec = _vectorize_sensor_obs(action_for_obs, twist_keys=twist_keys)
         x = torch.tensor([obs_vec], dtype=torch.float32, device=dev)
         with torch.no_grad():
             pred_vec = model(x)[0].detach().cpu().tolist()
-        predicted = _vectorize_action_from_vector(pred_vec, joint_keys=joint_keys)
+        predicted = _vectorize_action_from_vector(
+            pred_vec, cycle_id=frame.frame_index, twist_keys=twist_keys
+        )
         predicted.timestamp_ns = frame.timestamp_ns
 
         lf = LoggedFrame(
@@ -130,4 +162,3 @@ if __name__ == "__main__":
         "Direct execution of this module is deprecated. "
         "Use: uv run auto-surgery extract-pseudo-actions."
     )
-

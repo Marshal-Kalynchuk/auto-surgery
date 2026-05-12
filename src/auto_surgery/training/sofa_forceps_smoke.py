@@ -9,7 +9,8 @@ from auto_surgery.env.capture import SofaNativeRgbCapture
 from auto_surgery.env.sofa import SofaEnvironment
 from auto_surgery.env.sofa_tools import build_forceps_action_applier
 from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_brain_forceps_scene_path
-from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.schemas.commands import ControlMode, RobotCommand
+from auto_surgery.schemas.commands import Twist, Vec3
 from auto_surgery.schemas.manifests import EnvConfig
 
 def run_dejavu_forceps_smoke(
@@ -26,7 +27,6 @@ def run_dejavu_forceps_smoke(
     with tempfile.TemporaryDirectory(prefix="sofa-forceps-poc-", dir="/tmp") as tmp_root:
         env = SofaEnvironment(
             sofa_scene_path=scene_path,
-            fallback_to_stub=False,
             step_dt=0.01,
             action_applier=action_applier,
             pre_init_hooks=[capture.pre_init_hook],
@@ -38,7 +38,14 @@ def run_dejavu_forceps_smoke(
         for step_index in range(steps):
             action = RobotCommand(
                 timestamp_ns=1_000_000 + step_index,
-                joint_positions={"j0": 0.05 * step_index},
+                cycle_id=step_index,
+                control_mode=ControlMode.CARTESIAN_TWIST,
+                cartesian_twist=Twist(
+                    linear=Vec3(x=0.05 * step_index, y=0.0, z=0.0),
+                    angular=Vec3(x=0.0, y=0.0, z=0.0),
+                ),
+                enable=True,
+                source="scripted",
             )
             env.step(action)
             screenshot_path = output_dir / f"frame_{step_index:03d}.png"

@@ -15,7 +15,7 @@ from auto_surgery.env.sofa_rgb_native import attach_capture_camera
 from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_brain_forceps_scene_path
 from auto_surgery.env.sofa_tools import build_forceps_action_applier
 from auto_surgery.env.action_generators import build_sine_joint_position
-from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.schemas.commands import ControlMode, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.manifests import EnvConfig
 
 
@@ -317,13 +317,17 @@ def build_video_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_action(step: int, args: argparse.Namespace) -> float:
-    return build_sine_joint_position(
+def _build_twist(step: int, args: argparse.Namespace) -> Twist:
+    linear_x = build_sine_joint_position(
         step,
         joint_start=args.joint_start,
         joint_step=args.joint_step,
         amplitude=args.joint_sine_amplitude,
         phase_scale=args.joint_sine_frequency,
+    )
+    return Twist(
+        linear=Vec3(x=linear_x, y=0.0, z=0.0),
+        angular=Vec3(x=0.0, y=0.0, z=0.0),
     )
 
 
@@ -359,7 +363,6 @@ def run_capture_brain_forceps_pngs(args: argparse.Namespace) -> list[Path]:
 
     env = SofaEnvironment(
         sofa_scene_path=scene_path,
-        fallback_to_stub=False,
         step_dt=0.01,
         action_applier=action_applier,
         pre_init_hooks=[pre_init_hook],
@@ -372,7 +375,11 @@ def run_capture_brain_forceps_pngs(args: argparse.Namespace) -> list[Path]:
     for step in range(args.frames):
         action = RobotCommand(
             timestamp_ns=_format_timestamp(step, args),
-            joint_positions={"j0": _build_action(step, args)},
+            cycle_id=step,
+            control_mode=ControlMode.CARTESIAN_TWIST,
+            cartesian_twist=_build_twist(step, args),
+            enable=True,
+            source="scripted",
         )
         env.step(action)
         payload = capture.capture(root_node=root_node, step_index=step)

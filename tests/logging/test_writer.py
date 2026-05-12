@@ -9,11 +9,17 @@ from auto_surgery.logging.writer import (
     load_segment_frames,
     load_session_manifest,
 )
-from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.schemas.commands import ControlMode, Pose, Quaternion, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.logging import LoggedFrame, SafetyDecision
 from auto_surgery.schemas.manifests import DataClassification
 from auto_surgery.schemas.scene import SceneGraph
-from auto_surgery.schemas.sensors import SensorBundle
+from auto_surgery.schemas.sensors import (
+    CameraIntrinsics,
+    CameraView,
+    SafetyStatus,
+    SensorBundle,
+    ToolState,
+)
 
 
 def test_session_writer_append_only_segments(tmp_path: Path) -> None:
@@ -33,9 +39,41 @@ def test_session_writer_append_only_segments(tmp_path: Path) -> None:
         lf = LoggedFrame(
             frame_index=i,
             timestamp_ns=i,
-            sensor_payload=SensorBundle(timestamp_ns=i, clock_source="ntp", modalities={}),
+            sensor_payload=SensorBundle(
+                timestamp_ns=i,
+                sim_time_s=0.0,
+                tool=ToolState(
+                    pose=Pose(position=Vec3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)),
+                    twist=Twist(linear=Vec3(x=0.0, y=0.0, z=0.0), angular=Vec3(x=0.0, y=0.0, z=0.0)),
+                    jaw=0.0,
+                    wrench=Vec3(x=0.0, y=0.0, z=0.0),
+                    in_contact=False,
+                ),
+                cameras=[
+                    CameraView(
+                        camera_id="test_cam",
+                        timestamp_ns=i,
+                        extrinsics=Pose(
+                            position=Vec3(x=0.0, y=0.0, z=0.0),
+                            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+                        ),
+                        intrinsics=CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=1, height=1),
+                    )
+                ],
+                safety=SafetyStatus(
+                    motion_enabled=True,
+                    command_blocked=False,
+                    block_reason=None,
+                    cycle_id_echo=0,
+                ),
+            ),
             scene_snapshot=SceneGraph(frame_index=i),
-            commanded_action=RobotCommand(timestamp_ns=i),
+            commanded_action=RobotCommand(
+                timestamp_ns=i,
+                cycle_id=i,
+                control_mode=ControlMode.CARTESIAN_TWIST,
+                cartesian_twist={"linear": {"x": 0.0, "y": 0.0, "z": 0.0}, "angular": {"x": 0.0, "y": 0.0, "z": 0.0}},
+            ),
             safety_decision=SafetyDecision(ok=True),
         )
         writer.write_frame(lf)

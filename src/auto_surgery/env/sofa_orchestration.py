@@ -2,37 +2,36 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 from typing import Any
 
 from auto_surgery.env.protocol import Environment
-from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.schemas.commands import ControlMode, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.manifests import EnvConfig, SceneConfig
 from auto_surgery.schemas.results import StepResult
 from auto_surgery.schemas.scene import SceneGraph
-from auto_surgery.schemas.sensors import SensorBundle
+from auto_surgery.schemas.sensors import Contact, JointState, SafetyStatus, SensorBundle
 from auto_surgery.env.sofa_backend import (
     SofaRuntimeBackend,
     SofaRuntimeBackendFactory,
     SofaRuntimeContractError,
     SofaNotIntegratedError,
     SofaSceneFactory,
-    _StubRuntimeBackend,
     build_sofa_runtime_backend,
 )
-from auto_surgery.env.sim import StubSimEnvironment
+
+
+_ZERO_TWIST = Twist(linear=Vec3(x=0.0, y=0.0, z=0.0), angular=Vec3(x=0.0, y=0.0, z=0.0))
 
 
 class SofaEnvironment(Environment):
-    """Adapter implementing the `Environment` protocol for SOFA or stub fallback."""
+    """Adapter implementing the `Environment` protocol for SOFA backends."""
 
     def __init__(
         self,
         *,
         sofa_scene_path: str | None = None,
         sofa_scene_factory: SofaSceneFactory | None = None,
-        fallback_to_stub: bool = True,
         sofa_import_hint: str = "pip install sofa-python3 (or your vendor's SOFA bindings)",
         sofa_backend_factory: SofaRuntimeBackendFactory | None = None,
         step_dt: float = 0.01,
@@ -42,17 +41,6 @@ class SofaEnvironment(Environment):
         extra: dict[str, Any] | None = None,
     ) -> None:
         extra_runtime = extra or {}
-
-        if fallback_to_stub:
-            warnings.warn(
-                "SofaEnvironment fallback_to_stub=True: using StubSimEnvironment backend. "
-                "This is expected in Stage-0 until vendor integration is wired.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            self._backend: SofaRuntimeBackend = _StubRuntimeBackend(StubSimEnvironment())
-            return
-
         resolved_path = sofa_scene_path
         resolved_factory = sofa_scene_factory
         resolved_applier = action_applier
@@ -72,7 +60,7 @@ class SofaEnvironment(Environment):
 
         if resolved_path is None and resolved_factory is None:
             raise SofaNotIntegratedError(
-                "fallback_to_stub=False requires sofa_scene_path, sofa_scene_factory, "
+                "SofaEnvironment requires sofa_scene_path, sofa_scene_factory, "
                 "or a SceneConfig that resolves to one of those."
             )
         if resolved_path is not None and resolved_factory is not None:
@@ -112,9 +100,113 @@ class SofaEnvironment(Environment):
                 "Failed to initialize SOFA backend. Install/point a compatible runtime or pass "
                 "sofa_backend_factory for your adapter contract."
             ) from exc
+        self._sim_step_index = 0
+        self._sim_time_s = 0.0
+        self._last_accepted_cycle_id = -1
+        self._control_rate_hz = 250.0
+        self._frame_rate_hz = 30.0
+        self._frame_decimation = max(1, round(self._control_rate_hz / self._frame_rate_hz))
+        self._latest_step_sensors: SensorBundle | None = None
 
-    def reset(self, config: EnvConfig) -> SceneGraph:
-        return self._backend.reset(config)
+    def _dt(self) -> float:
+        return 1.0 / self._control_rate_hz
+
+    @staticmethod
+    def _noop_command(command: RobotCommand) -> RobotCommand:
+        """Convert blocked command into deterministic no-motion command."""
+        return command.model_copy(
+            update={
+                "control_mode": ControlMode.CARTESIAN_TWIST,
+                "enable": False,
+                "tool_jaw_target": None,
+                "cartesian_twist": _ZERO_TWIST,
+                "cartesian_pose_target": None,
+                "joint_positions": None,
+                "joint_velocities": None,
+            }
+        )
+
+    def _dispatch_command(self, command: RobotCommand) -> RobotCommand:
+        if command.control_mode == ControlMode.CARTESIAN_TWIST:
+            return command
+        if command.control_mode == ControlMode.CARTESIAN_POSE:
+            return command
+        if command.control_mode == ControlMode.JOINT_POSITION:
+            return command
+        if command.control_mode == ControlMode.JOINT_VELOCITY:
+            return command
+        raise ValueError(
+            f"Unsupported control mode for SOFA dispatch: {command.control_mode.value}"
+        )
+
+    def _mask_camera_frames(self, sensors: SensorBundle, *, is_capture_tick: bool) -> SensorBundle:
+        if is_capture_tick:
+            return sensors
+        masked_cameras = [camera.model_copy(update={"frame_rgb": None}) for camera in sensors.cameras]
+        return sensors.model_copy(deep=True, update={"cameras": masked_cameras})
+
+    def _apply_backend_control_rate(self) -> None:
+        if hasattr(self._backend, "set_control_rate_hz"):
+            self._backend.set_control_rate_hz(self._control_rate_hz)
+
+    def _apply_initial_jaw(self, jaw: float) -> None:
+        if hasattr(self._backend, "set_initial_jaw"):
+            self._backend.set_initial_jaw(jaw)
+
+    def _apply_tool_jaw(self, command: RobotCommand) -> None:
+        if command.tool_jaw_target is None:
+            return
+        if hasattr(self._backend, "set_tool_jaw_target"):
+            self._backend.set_tool_jaw_target(command.tool_jaw_target)
+
+    def _command_block_reason(self, command: RobotCommand) -> tuple[bool, str | None]:
+        if command.cycle_id <= self._last_accepted_cycle_id:
+            return True, "stale_cycle_id"
+        if not command.enable:
+            return True, "disabled"
+        return False, None
+
+    def _safety(self, command: RobotCommand, blocked: bool, reason: str | None) -> SafetyStatus:
+        return SafetyStatus(
+            motion_enabled=command.enable and not blocked,
+            command_blocked=blocked,
+            block_reason=reason,
+            cycle_id_echo=command.cycle_id,
+        )
+
+    def _step_sensors(self) -> SensorBundle:
+        return self._backend.get_sensors()
+
+    def reset(self, config: EnvConfig) -> StepResult:
+        self._sim_step_index = 0
+        self._sim_time_s = 0.0
+        self._last_accepted_cycle_id = -1
+        self._control_rate_hz = float(config.control_rate_hz)
+        self._frame_rate_hz = float(config.frame_rate_hz)
+        self._frame_decimation = max(1, round(self._control_rate_hz / self._frame_rate_hz))
+        self._apply_backend_control_rate()
+        self._apply_initial_jaw(config.scene.initial_jaw)
+
+        self._backend.reset(config)
+        sensors = self._step_sensors().model_copy(
+            update={
+                "timestamp_ns": 0,
+                "sim_time_s": 0.0,
+                "safety": SafetyStatus(
+                    motion_enabled=False,
+                    command_blocked=False,
+                    block_reason=None,
+                    cycle_id_echo=-1,
+                ),
+            }
+        )
+        self._latest_step_sensors = sensors
+        return StepResult(
+            sensors=sensors,
+            dt=0.0,
+            sim_step_index=0,
+            is_capture_tick=True,
+        )
 
     @property
     def sofa_scene_root(self) -> Any:
@@ -124,28 +216,46 @@ class SofaEnvironment(Environment):
         scene = getattr(backend, "_scene_handle", None)
         if scene is None:
             raise SofaNotIntegratedError(
-                "No native SOFA scene root is available (stub backend, or reset() was not called)."
+                "No native SOFA scene root is available. Call reset() before requesting it."
             )
         return scene
 
     def step(self, action: RobotCommand) -> StepResult:
-        result = self._backend.step(action)
-        modalities = dict(result.sensor_observation.modalities)
-        modalities["command_echo"] = action.model_dump()
+        blocked, reason = self._command_block_reason(action)
+        command = self._dispatch_command(self._noop_command(action) if blocked else action)
+        self._apply_tool_jaw(command)
+        self._backend.step(command)
+        self._sim_step_index += 1
+        self._sim_time_s += self._dt()
+        if not blocked:
+            self._last_accepted_cycle_id = action.cycle_id
+        is_capture_tick = self._sim_step_index % self._frame_decimation == 0
+        step_sensors = self._mask_camera_frames(self._step_sensors(), is_capture_tick=is_capture_tick)
+        step_sensors = step_sensors.model_copy(
+            update={
+                "safety": self._safety(action, blocked=blocked, reason=reason),
+                "timestamp_ns": action.timestamp_ns,
+                "sim_time_s": self._sim_time_s,
+            },
+        )
+        self._latest_step_sensors = step_sensors
         return StepResult(
-            next_scene=result.next_scene,
-            sensor_observation=result.sensor_observation.model_copy(
-                update={
-                    "timestamp_ns": action.timestamp_ns,
-                    "clock_source": result.sensor_observation.clock_source,
-                    "modalities": modalities,
-                }
-            ),
-            info=result.info,
+            sensors=step_sensors,
+            dt=self._dt(),
+            sim_step_index=self._sim_step_index,
+            is_capture_tick=is_capture_tick,
         )
 
     def get_sensors(self) -> SensorBundle:
-        return self._backend.get_sensors()
+        if self._latest_step_sensors is None:
+            return self._backend.get_sensors()
+        return self._latest_step_sensors.model_copy(deep=True)
+
+    def get_joint_state(self) -> JointState:
+        return self._backend.get_joint_state()
+
+    def get_contacts(self) -> list[Contact]:
+        return self._backend.get_contacts()
 
     def get_scene(self) -> SceneGraph:
         return self._backend.get_scene()

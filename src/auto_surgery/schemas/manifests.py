@@ -43,6 +43,18 @@ class SceneConfig(BaseModel):
         default=None,
         description="Optional explicit `.scn` path; when set, overrides `scene_id` factory lookup.",
     )
+    initial_jaw: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class DomainRandomizationConfig(BaseModel):
+    """Opaque placeholder for piece-4 randomization knobs."""
+
+    model_config = {"extra": "forbid"}
+
+    spatial_variation: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Placeholder for spatial randomization hints (piece 4).",
+    )
 
 
 class EnvConfig(BaseModel):
@@ -52,8 +64,25 @@ class EnvConfig(BaseModel):
 
     scenario_id: str = "default"
     seed: int = 0
-    domain_randomization: dict[str, Any] = Field(default_factory=dict)
-    scene: SceneConfig | None = None
+    scene: SceneConfig = Field(default_factory=SceneConfig)
+    domain_randomization: DomainRandomizationConfig = Field(
+        default_factory=DomainRandomizationConfig,
+        description="Piece-1 placeholder; Passthrough to piece-4 randomization.",
+    )
+    control_rate_hz: float = Field(
+        default=250.0,
+        ge=1.0,
+        description="Duration of each control tick (controls dt = 1/control_rate_hz).",
+    )
+    frame_rate_hz: float = Field(
+        default=30.0,
+        ge=1.0,
+        description="Rendering cadence; used to compute capture ticks.",
+    )
+    episode_max_ticks: int | None = Field(
+        default=None,
+        description="Caller hint for max ticks; not enforced by env.",
+    )
 
 
 class RunMetadata(BaseModel):

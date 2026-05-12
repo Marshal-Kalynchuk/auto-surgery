@@ -1,21 +1,19 @@
 """Train an Inverse Dynamics Model (IDM) on logged environment frames.
 
-Stage-0 vectorizes `command_echo` joint positions. When `rgb` blobs exist under a
+Stage-0 vectorizes `cartesian_twist` commands. When `rgb` blobs exist under a
 session's `blobs/` prefix, a future encoder can join them by `frame_index` before this
-function is extended beyond the MLP joint-space baseline.
+function is extended beyond the twist-vectorized baseline.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import fsspec
 
 from auto_surgery.models.idm import IDMConfig, build_idm_mlp
 from auto_surgery.schemas.commands import RobotCommand
 from auto_surgery.schemas.manifests import CheckpointManifest, DatasetManifest
-from auto_surgery.schemas.sensors import SensorBundle
 from auto_surgery.training.checkpoints import save_torch_checkpoint_atomic
 from auto_surgery.training.datasets import iter_logged_frames
 
@@ -24,51 +22,52 @@ from auto_surgery.training.datasets import iter_logged_frames
 class VectorizerConfig:
     """Vectorization contract stored in the IDM checkpoint."""
 
-    joint_keys: list[str]
+    twist_keys: list[str]
 
 
-def _extract_command_echo(sensors: SensorBundle) -> dict[str, Any] | None:
-    """Stage-0 expects a sensor modality with joint command echo."""
-    modalities = sensors.modalities
-    cmd_echo = modalities.get("command_echo")
-    if not isinstance(cmd_echo, dict):
-        return None
-    return cmd_echo
+_TWIST_FEATURE_KEYS: list[str] = [
+    "cartesian_twist.linear.x",
+    "cartesian_twist.linear.y",
+    "cartesian_twist.linear.z",
+    "cartesian_twist.angular.x",
+    "cartesian_twist.angular.y",
+    "cartesian_twist.angular.z",
+]
 
 
-def vectorize_command_joint_positions(
-    cmd: RobotCommand, *, joint_keys: list[str]
-) -> list[float]:
-    if cmd.joint_positions is None:
-        raise ValueError("RobotCommand.joint_positions is required for Stage-0 vectorization.")
-    missing = [k for k in joint_keys if k not in cmd.joint_positions]
+def _vectorize_twist_payload(command: RobotCommand, *, twist_keys: list[str]) -> list[float]:
+    if command.cartesian_twist is None:
+        raise ValueError("RobotCommand.cartesian_twist is required for twist vectorization.")
+    twist = command.cartesian_twist
+    values = {
+        "cartesian_twist.linear.x": twist.linear.x,
+        "cartesian_twist.linear.y": twist.linear.y,
+        "cartesian_twist.linear.z": twist.linear.z,
+        "cartesian_twist.angular.x": twist.angular.x,
+        "cartesian_twist.angular.y": twist.angular.y,
+        "cartesian_twist.angular.z": twist.angular.z,
+    }
+    missing = [key for key in twist_keys if key not in values]
     if missing:
-        raise ValueError(f"RobotCommand missing joint keys: {missing}")
-    return [float(cmd.joint_positions[k]) for k in joint_keys]
+        raise ValueError(f"Action twist vectorization missing keys: {missing}")
+    return [float(values[key]) for key in twist_keys]
 
 
-def vectorize_sensor_to_obs(
-    sensors: SensorBundle, *, joint_keys: list[str]
-) -> list[float]:
-    cmd_echo = _extract_command_echo(sensors)
-    if cmd_echo is None:
-        raise ValueError("Stage-0 vectorizer requires sensors.modalities['command_echo'].")
-    joint_positions = cmd_echo.get("joint_positions")
-    if not isinstance(joint_positions, dict):
-        raise ValueError("command_echo must include a joint_positions dict.")
-    missing = [k for k in joint_keys if k not in joint_positions]
-    if missing:
-        raise ValueError(f"command_echo missing joint keys: {missing}")
-    return [float(joint_positions[k]) for k in joint_keys]
+def vectorize_command_twist(cmd: RobotCommand, *, twist_keys: list[str]) -> list[float]:
+    return _vectorize_twist_payload(cmd, twist_keys=twist_keys)
 
 
-def infer_joint_keys_from_manifest(manifest: DatasetManifest) -> list[str]:
+def vectorize_sensor_twist(action: RobotCommand, *, twist_keys: list[str]) -> list[float]:
+    return _vectorize_twist_payload(action, twist_keys=twist_keys)
+
+
+def infer_twist_keys_from_manifest(manifest: DatasetManifest) -> list[str]:
     for frame in iter_logged_frames(manifest, phi_training_allowed=False):
         action = frame.executed_action or frame.commanded_action
-        if action is None or action.joint_positions is None:
+        if action is None or action.cartesian_twist is None:
             continue
-        return sorted(action.joint_positions.keys())
-    raise RuntimeError("Could not infer joint_keys from dataset frames.")
+        return list(_TWIST_FEATURE_KEYS)
+    raise RuntimeError("Could not infer twist feature keys from dataset frames.")
 
 
 def train_idm(
@@ -89,16 +88,16 @@ def train_idm(
         raise ImportError("Training requires torch: uv sync --extra train") from e
 
     dev = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    joint_keys = infer_joint_keys_from_manifest(manifest)
+    twist_keys = infer_twist_keys_from_manifest(manifest)
 
     obs_vecs: list[list[float]] = []
     act_vecs: list[list[float]] = []
     for frame in iter_logged_frames(manifest, phi_training_allowed=False):
         action = frame.executed_action or frame.commanded_action
-        if action is None or action.joint_positions is None:
+        if action is None or action.cartesian_twist is None:
             continue
-        obs_vec = vectorize_sensor_to_obs(frame.sensor_payload, joint_keys=joint_keys)
-        act_vec = vectorize_command_joint_positions(action, joint_keys=joint_keys)
+        obs_vec = vectorize_sensor_twist(action, twist_keys=twist_keys)
+        act_vec = vectorize_command_twist(action, twist_keys=twist_keys)
         obs_vecs.append(obs_vec)
         act_vecs.append(act_vec)
 
@@ -130,7 +129,7 @@ def train_idm(
 
     state = {
         "model_state": model.state_dict(),
-        "vectorizer": VectorizerConfig(joint_keys=joint_keys).__dict__,
+        "vectorizer": VectorizerConfig(twist_keys=twist_keys).__dict__,
         "obs_dim": obs_dim,
         "act_dim": act_dim,
         "hidden_dim": hidden_dim,
@@ -168,9 +167,7 @@ def main() -> None:
         required=True,
         help="fsspec URI to DatasetManifest JSON.",
     )
-    p.add_argument(
-        "--out-ckpt-uri", required=True, help="fsspec URI to write .pt checkpoint."
-    )
+    p.add_argument("--out-ckpt-uri", required=True, help="fsspec URI to write .pt checkpoint.")
     p.add_argument("--steps", type=int, default=300)
     p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--hidden-dim", type=int, default=256)
@@ -194,4 +191,3 @@ if __name__ == "__main__":
         "Direct execution of this module is deprecated. "
         "Use: uv run auto-surgery train-idm."
     )
-
