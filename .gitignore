@@ -10,3 +10,7 @@ checkpoints/
 *.parquet
 .coverage
 htmlcov/
+*.log
+artifacts/
+
+.cursor/

@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from auto_surgery.env.protocol import Environment
 from auto_surgery.env.sim import StubSimEnvironment
 from auto_surgery.schemas.commands import RobotCommand
-from auto_surgery.schemas.manifests import EnvConfig
+from auto_surgery.schemas.manifests import EnvConfig, SceneConfig
 from auto_surgery.schemas.results import StepResult
 from auto_surgery.schemas.scene import SceneGraph
 from auto_surgery.schemas.sensors import SensorBundle
@@ -39,6 +39,7 @@ class SofaRuntimeBackend(Protocol):
 
 
 SofaRuntimeBackendFactory = Callable[[str, dict[str, Any] | None], SofaRuntimeBackend]
+SofaSceneFactory = Callable[[Any, EnvConfig], Any]
 
 
 def _module_candidates_for_runtime() -> tuple[str, ...]:
@@ -131,10 +132,20 @@ class _NativeSofaBackend:
         self,
         module_name: str,
         module: Any,
-        scene_path: str,
+        scene_path: str | None,
+        *,
+        scene_factory: SofaSceneFactory | None = None,
+        step_dt: float = 0.01,
+        action_applier: Callable[[Any, RobotCommand], None] | None = None,
+        pre_init_hooks: list[Callable[[Any, EnvConfig], None]] | None = None,
     ) -> None:
+        self._module = module
         self._module_name = module_name
         self._scene_path = scene_path
+        self._scene_factory = scene_factory
+        self._step_dt = float(step_dt)
+        self._action_applier = action_applier
+        self._pre_init_hooks = tuple(pre_init_hooks or ())
         self._frame_index = 0
         self._scene_handle: Any | None = None
         self._latest_scene = SceneGraph(
@@ -176,7 +187,7 @@ class _NativeSofaBackend:
         return loader, stepper, resetter, snapshotter, sensor_reader
 
     def reset(self, config: EnvConfig) -> SceneGraph:
-        if self._loader is None:
+        if self._scene_factory is None and self._loader is None:
             raise SofaRuntimeContractError(
                 "SOFA runtime loaded but no scene loader found. "
                 f"Expected one of {self._LOADER_NAMES}."
@@ -187,7 +198,24 @@ class _NativeSofaBackend:
                 f"Expected one of {self._RESET_NAMES}."
             )
         self._frame_index = 0
-        self._scene_handle = _call_runtime_callable(self._loader, self._scene_path)
+        if self._scene_factory is not None:
+            # Build the scene graph in-process via the provided Python factory.
+            core = getattr(self._module, "Core", None)
+            node_ctor = getattr(core, "Node", None) if core is not None else None
+            if node_ctor is None:
+                raise SofaNotIntegratedError(
+                    "Sofa runtime missing Sofa.Core.Node; cannot construct in-process scene."
+                )
+
+            self._scene_handle = node_ctor("root")
+            _call_runtime_callable(self._scene_factory, self._scene_handle, config)
+        else:
+            if self._loader is None or self._scene_path is None:
+                raise SofaRuntimeContractError("Scene loading requires scene_path.")
+            self._scene_handle = _call_runtime_callable(self._loader, self._scene_path)
+
+        for hook in self._pre_init_hooks:
+            hook(self._scene_handle, config)
         _call_runtime_callable(self._resetter, self._scene_handle, config)
         self._latest_scene = self._extract_scene()
         return self._latest_scene
@@ -200,7 +228,12 @@ class _NativeSofaBackend:
                 "SOFA runtime loaded but no stepping method found. "
                 f"Expected one of {self._STEP_NAMES}."
             )
-        _call_runtime_callable(self._stepper, self._scene_handle, action)
+        if self._action_applier is not None:
+            self._action_applier(self._scene_handle, action)
+        try:
+            self._stepper(self._scene_handle, action)
+        except TypeError:
+            self._stepper(self._scene_handle, self._step_dt)
         self._frame_index += 1
         self._latest_scene = self._extract_scene()
         self._latest_sensors = self._extract_sensors()
@@ -256,12 +289,16 @@ class _NativeSofaBackend:
 
 
 def build_sofa_runtime_backend(
-    sofa_scene_path: str,
+    sofa_scene_path: str | None,
     sofa_import_hint: str = "pip install sofa-python3 (or your vendor's SOFA bindings)",
+    step_dt: float = 0.01,
+    action_applier: Callable[[Any, RobotCommand], None] | None = None,
     *,
+    sofa_scene_factory: SofaSceneFactory | None = None,
     candidates: tuple[str, ...] | None = None,
     extra: dict[str, Any] | None = None,
-    ) -> SofaRuntimeBackend:
+    pre_init_hooks: list[Callable[[Any, EnvConfig], None]] | None = None,
+) -> SofaRuntimeBackend:
     """Instantiate a runtime backend from discovered SOFA module."""
 
     module_name, module = resolve_sofa_runtime_import_candidates(candidates=candidates)
@@ -271,11 +308,33 @@ def build_sofa_runtime_backend(
             "SOFA runtime module was not importable in non-stub mode. "
             f"Checked: {candidates_text}. Hint: {sofa_import_hint}"
         )
-    if not isinstance(sofa_scene_path, str) or not sofa_scene_path.strip():
-        raise SofaNotIntegratedError("sofa_scene_path is required for non-stub execution.")
+    if sofa_scene_path is None and sofa_scene_factory is None:
+        raise SofaNotIntegratedError(
+            "Non-stub execution requires either sofa_scene_path or sofa_scene_factory."
+        )
+    if sofa_scene_path is not None and (
+        not isinstance(sofa_scene_path, str) or not sofa_scene_path.strip()
+    ):
+        raise SofaNotIntegratedError("sofa_scene_path must be a non-empty string.")
     if module_name is None:
         raise SofaNotIntegratedError("Resolved SOFA module name was unexpectedly empty.")
-    return _NativeSofaBackend(module_name, module, sofa_scene_path)
+
+    # Verify we can reach the SofaPython3 python bindings (Sofa.Core.Node construction).
+    core = getattr(module, "Core", None)
+    if core is None or not hasattr(core, "Node"):
+        raise SofaNotIntegratedError(
+            f"Sofa runtime appears incomplete: missing Sofa.Core.Node. Hint: {sofa_import_hint}"
+        )
+
+    return _NativeSofaBackend(
+        module_name,
+        module,
+        sofa_scene_path,
+        scene_factory=sofa_scene_factory,
+        step_dt=step_dt,
+        action_applier=action_applier,
+        pre_init_hooks=pre_init_hooks,
+    )
 
 
 class SofaEnvironment(Environment):
@@ -285,9 +344,14 @@ class SofaEnvironment(Environment):
         self,
         *,
         sofa_scene_path: str | None = None,
+        sofa_scene_factory: SofaSceneFactory | None = None,
         fallback_to_stub: bool = True,
         sofa_import_hint: str = "pip install sofa-python3 (or your vendor's SOFA bindings)",
         sofa_backend_factory: SofaRuntimeBackendFactory | None = None,
+        step_dt: float = 0.01,
+        action_applier: Callable[[Any, RobotCommand], None] | None = None,
+        pre_init_hooks: list[Callable[[Any, EnvConfig], None]] | None = None,
+        scene_config: SceneConfig | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
         extra_runtime = extra or {}
@@ -302,19 +366,59 @@ class SofaEnvironment(Environment):
             self._backend: SofaRuntimeBackend = _StubRuntimeBackend(StubSimEnvironment())
             return
 
-        if sofa_scene_path is None:
+        resolved_path = sofa_scene_path
+        resolved_factory = sofa_scene_factory
+        resolved_applier = action_applier
+
+        if scene_config is not None:
+            if scene_config.scene_xml_path:
+                resolved_path = scene_config.scene_xml_path
+                resolved_factory = None
+            elif resolved_factory is None and resolved_path is None:
+                from auto_surgery.env.sofa_registry import resolve_scene_factory
+
+                resolved_factory = resolve_scene_factory(scene_config.scene_id)
+            if resolved_applier is None:
+                from auto_surgery.env.sofa_tools import resolve_tool_action_applier
+
+                resolved_applier = resolve_tool_action_applier(scene_config.tool_id)
+
+        if resolved_path is None and resolved_factory is None:
             raise SofaNotIntegratedError(
-                "fallback_to_stub=False requires a valid sofa_scene_path for SOFA scene loading."
+                "fallback_to_stub=False requires sofa_scene_path, sofa_scene_factory, "
+                "or a SceneConfig that resolves to one of those."
+            )
+        if resolved_path is not None and resolved_factory is not None:
+            raise SofaNotIntegratedError(
+                "Provide only one of sofa_scene_path / scene_xml_path or sofa_scene_factory."
+            )
+        if resolved_factory is not None and sofa_backend_factory is not None:
+            raise SofaNotIntegratedError(
+                "When using sofa_scene_factory, do not pass sofa_backend_factory "
+                "(it only accepts a scene_path)."
+            )
+        if pre_init_hooks and sofa_backend_factory is not None:
+            raise SofaNotIntegratedError(
+                "pre_init_hooks cannot be combined with sofa_backend_factory; the custom backend "
+                "owns init order."
             )
 
         try:
             if sofa_backend_factory is not None:
-                self._backend = sofa_backend_factory(sofa_scene_path, extra_runtime)
+                if resolved_path is None:
+                    raise SofaNotIntegratedError(
+                        "sofa_backend_factory requires a concrete XML scene path."
+                    )
+                self._backend = sofa_backend_factory(resolved_path, extra_runtime)
             else:
                 self._backend = build_sofa_runtime_backend(
-                    sofa_scene_path,
+                    resolved_path,
                     sofa_import_hint,
+                    step_dt,
+                    resolved_applier,
                     extra=extra_runtime,
+                    sofa_scene_factory=resolved_factory,
+                    pre_init_hooks=pre_init_hooks,
                 )
         except (SofaRuntimeContractError, SofaNotIntegratedError) as exc:
             raise SofaNotIntegratedError(
@@ -324,6 +428,18 @@ class SofaEnvironment(Environment):
 
     def reset(self, config: EnvConfig) -> SceneGraph:
         return self._backend.reset(config)
+
+    @property
+    def sofa_scene_root(self) -> Any:
+        """Return the live `Sofa.Core.Node` root for native SOFA runs (valid after `reset()`)."""
+
+        backend = self._backend
+        scene = getattr(backend, "_scene_handle", None)
+        if scene is None:
+            raise SofaNotIntegratedError(
+                "No native SOFA scene root is available (stub backend, or reset() was not called)."
+            )
+        return scene
 
     def step(self, action: RobotCommand) -> StepResult:
         result = self._backend.step(action)

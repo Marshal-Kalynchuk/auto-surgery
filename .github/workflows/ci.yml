@@ -29,3 +29,33 @@ jobs:
 
       - name: Pytest
         run: uv run pytest -q
+
+  sofa_native_smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          channels: conda-forge
+          channel-priority: strict
+
+      - name: Install SOFA runtime + OffscreenCamera plugin
+        shell: bash -l {0}
+        run: |
+          SOFA_ENV_NAME=base \
+          SOFA_CHANNEL="https://prefix.dev/sofa-framework" \
+          bash infra/sofa/setup_sofa_conda.sh
+
+      - name: Verify OffscreenCamera runtime contract
+        shell: bash -l {0}
+        run: |
+          source .env.sofa
+          python - <<'PY'
+          from auto_surgery.env.sofa_rgb_native import validate_native_capture_runtime
+
+          validate_native_capture_runtime()
+          print("offscreen capture contract ok")
+          PY

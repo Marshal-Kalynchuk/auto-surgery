@@ -15,6 +15,7 @@ from auto_surgery.schemas.manifests import (
     SESSION_MANIFEST_SCHEMA_VERSION,
     DataClassification,
     RetentionTier,
+    RunMetadata,
     SessionManifest,
 )
 
@@ -78,6 +79,20 @@ class SessionWriter:
         ):
             self._fs.makedirs(f"{self._root}/{rel}".rstrip("/"), exist_ok=True)
 
+    def write_blob(self, relative_under_blobs: str, data: bytes) -> str:
+        """Write raw bytes under this session's `blobs/` tree.
+
+        Returns a path relative to the storage root.
+        """
+
+        blob_root = storage.blobs_dir(self.case_id, self.session_id)
+        rel = f"{blob_root}/{relative_under_blobs.lstrip('/')}"
+        full = f"{self._root}/{rel}"
+        parent = full.rsplit("/", 1)[0]
+        self._fs.makedirs(parent, exist_ok=True)
+        self._fs.pipe_file(full, data)
+        return rel
+
     def write_frame(self, frame: LoggedFrame) -> None:
         self._buffer.append(frame)
         if len(self._buffer) >= self.segment_max_frames:
@@ -98,10 +113,18 @@ class SessionWriter:
         self._segment_index += 1
         self._buffer.clear()
 
-    def finalize(self) -> SessionManifest:
+    def finalize(self, *, run_metadata: RunMetadata | None = None) -> SessionManifest:
         """Seal remaining frames and write `session_manifest.json`."""
 
         self._flush_segment()
+        if run_metadata is not None:
+            rel = storage.run_metadata_path(self.case_id, self.session_id)
+            full = f"{self._root}/{rel}"
+            parent = full.rsplit("/", 1)[0]
+            self._fs.makedirs(parent, exist_ok=True)
+            payload = run_metadata.model_dump_json(indent=2).encode("utf-8")
+            self._fs.pipe_file(full, payload)
+            self._checksums[rel] = checksums.sha256_bytes(payload)
         manifest = SessionManifest(
             schema_version=SESSION_MANIFEST_SCHEMA_VERSION,
             session_id=self.session_id,

@@ -29,6 +29,20 @@ class RetentionTier(StrEnum):
 SESSION_MANIFEST_SCHEMA_VERSION = "session_manifest_v1"
 DATASET_MANIFEST_SCHEMA_VERSION = "dataset_manifest_v1"
 CHECKPOINT_MANIFEST_SCHEMA_VERSION = "checkpoint_manifest_v1"
+RUN_METADATA_SCHEMA_VERSION = "run_metadata_v1"
+
+
+class SceneConfig(BaseModel):
+    """Selects a SOFA scene + instrument pairing for native rollouts."""
+
+    model_config = {"extra": "forbid"}
+
+    scene_id: str = "dejavu_brain"
+    tool_id: str = "forceps"
+    scene_xml_path: str | None = Field(
+        default=None,
+        description="Optional explicit `.scn` path; when set, overrides `scene_id` factory lookup.",
+    )
 
 
 class EnvConfig(BaseModel):
@@ -39,6 +53,23 @@ class EnvConfig(BaseModel):
     scenario_id: str = "default"
     seed: int = 0
     domain_randomization: dict[str, Any] = Field(default_factory=dict)
+    scene: SceneConfig | None = None
+
+
+class RunMetadata(BaseModel):
+    """Per-rollout provenance snapshot (written next to the session manifest)."""
+
+    model_config = {"extra": "forbid"}
+
+    schema_version: str = Field(default=RUN_METADATA_SCHEMA_VERSION)
+    software_git_sha: str
+    steps_requested: int
+    fallback_to_stub: bool
+    sofa_scene_path: str | None = None
+    sofa_scene_id: str | None = None
+    sofa_tool_id: str | None = None
+    action_generator_config: dict[str, Any] = Field(default_factory=dict)
+    capture_modalities: list[str] = Field(default_factory=list)
 
 
 class SessionManifest(BaseModel):

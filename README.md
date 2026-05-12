@@ -8,6 +8,9 @@ Phase 0 Python infrastructure: typed schemas, `Environment` protocol (sim/real),
 uv sync --frozen --all-groups --extra train
 ```
 
+If you need a real SOFA runtime, bootstrap it first via
+[docs/SOFA_INSTALLATION.md](docs/SOFA_INSTALLATION.md) before non-stub stage-0 runs.
+
 ## Checks
 
 ```bash
@@ -24,6 +27,16 @@ Discover what the local runtime loader can see before executing non-stub runs:
 ```bash
 uv run python -c "from auto_surgery.env.sofa import discover_sofa_runtime_contract; print(discover_sofa_runtime_contract())"
 ```
+
+If needed, verify SOFA runtime and headless capture runtime:
+
+```bash
+source .env.sofa
+uv run python -c "from auto_surgery.env.sofa_rgb_native import validate_native_capture_runtime; validate_native_capture_runtime(); print('offscreen camera available')"
+```
+
+The SOFA native path used by this repo for image capture is the `SofaOffscreenCamera` plugin
+(bootstrapped via `infra/sofa/setup_sofa_conda.sh`) and configured by `.env.sofa`.
 
 Run a bounded rollout and dataset manifest output using the staged harness:
 
@@ -107,6 +120,21 @@ PY
 ```bash
 uv run auto-surgery smoke --skip-gpu   # CPU-only import checks
 uv run auto-surgery smoke              # full CUDA smoke when torch+GPU present
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# Capture brain-forceps rollout as mp4 in one command
+uv run auto-surgery capture-brain-forceps-video \
+  --qgl-view "$REPO_ROOT/DejaVu-main/scenes/brain/brain.scn.qglviewer.view" \
+  --frames 180 \
+  --fps 30 \
+  --output "$REPO_ROOT/artifacts/brain_forceps.mp4"
+
+uv run auto-surgery capture-brain-forceps-pngs \
+  --qgl-view "$REPO_ROOT/DejaVu-main/scenes/brain/brain.scn.qglviewer.view" \
+  --frames 180 \
+  --output-dir "$REPO_ROOT/artifacts" \
+  --prefix brain_forceps_sample
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for system architecture.

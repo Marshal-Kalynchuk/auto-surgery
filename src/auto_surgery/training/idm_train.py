@@ -1,4 +1,9 @@
-"""Train an Inverse Dynamics Model (IDM) on logged environment frames."""
+"""Train an Inverse Dynamics Model (IDM) on logged environment frames.
+
+Stage-0 vectorizes `command_echo` joint positions. When `rgb` blobs exist under a
+session's `blobs/` prefix, a future encoder can join them by `frame_index` before this
+function is extended beyond the MLP joint-space baseline.
+"""
 
 from __future__ import annotations
 

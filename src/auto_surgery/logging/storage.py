@@ -19,6 +19,10 @@ def session_manifest_path(case_id: str, session_id: str) -> str:
     return f"{session_prefix(case_id, session_id)}/session_manifest.json"
 
 
+def run_metadata_path(case_id: str, session_id: str) -> str:
+    return f"{session_prefix(case_id, session_id)}/run_metadata.json"
+
+
 def segment_path(case_id: str, session_id: str, segment_index: int) -> str:
     return f"{segments_dir(case_id, session_id)}/segment_{segment_index:05d}.parquet"
 
