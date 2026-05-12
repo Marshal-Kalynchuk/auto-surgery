@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from auto_surgery.env.action_generators import ActionGenerator, build_default_action_generator
+from auto_surgery.env.action_generators import (
+    ActionGenerator,
+    build_default_action_generator,
+    build_sine_joint_command,
+)
 from auto_surgery.env.capture import CaptureModality
+from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_brain_forceps_scene_path
 from auto_surgery.env.sofa import (
     SofaEnvironment,
     SofaRuntimeBackendFactory,
@@ -35,13 +39,12 @@ def build_lite_command(
     step_index: int, *, base_ns: int = 1_000_000, amplitude: float = 0.05
 ) -> RobotCommand:
     """Generate a deterministic 1-joint command for smoke trajectories."""
-
-    t = step_index * 0.1
-    joint = amplitude * math.sin(t)
-    return RobotCommand(
-        timestamp_ns=base_ns + step_index,
-        joint_positions={"j0": float(joint)},
-        representation="joint",
+    return build_sine_joint_command(
+        step_index,
+        base_ns=base_ns,
+        amplitude=amplitude,
+        phase_scale=0.1,
+        joint_key="j0",
     )
 
 
@@ -78,9 +81,14 @@ def run_sofa_rollout_dataset(
         for hook in [getattr(cap, "pre_init_hook", None) for cap in active_modalities]
         if callable(hook)
     ]
+    resolved_scene_path = (
+        resolve_brain_forceps_scene_path(sofa_scene_path)
+        if sofa_scene_path is not None
+        else None
+    )
 
     env = SofaEnvironment(
-        sofa_scene_path=sofa_scene_path,
+        sofa_scene_path=resolved_scene_path,
         sofa_scene_factory=sofa_scene_factory,
         scene_config=scene_config,
         fallback_to_stub=fallback_to_stub,
@@ -138,7 +146,7 @@ def run_sofa_rollout_dataset(
             commanded_action=cmd,
             executed_action=cmd,
             safety_decision=None,
-            skill_state=None,
+            entity_state=None,
             surgeon_input=None,
             outcome_label=None,
         )

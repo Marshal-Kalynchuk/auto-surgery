@@ -11,7 +11,7 @@ Each job dict must match the keyword arguments of `run_sofa_rollout_dataset` (fo
 Use one array task per episode and invoke the Typer CLI:
 
 ```bash
-uv run python -m auto_surgery.training.run_one_episode \
+uv run auto-surgery run-one-episode \
   --storage-root-uri file:///scratch/$USER/sofa-runs/ \
   --case-id brain_poc \
   --session-id ep_${SLURM_ARRAY_TASK_ID} \

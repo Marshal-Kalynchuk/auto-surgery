@@ -10,6 +10,7 @@ from auto_surgery.schemas.commands import RobotCommand
 
 def _set_translation(ogl_model: Any, translation: tuple[float, float, float]) -> bool:
     x, y, z = translation
+    translation_vector = [float(x), float(y), float(z)]
     for value in (
         getattr(ogl_model, "translation", None),
         getattr(ogl_model, "findData", lambda _name: None)("translation")
@@ -20,13 +21,13 @@ def _set_translation(ogl_model: Any, translation: tuple[float, float, float]) ->
             continue
         try:
             if hasattr(value, "value"):
-                value.value = f"{x} {y} {z}"
+                value.value = translation_vector
             else:
-                ogl_model.translation = f"{x} {y} {z}"
+                ogl_model.translation = translation_vector
             # Some SOFA bindings require an explicit data-set call instead of
             # overwriting a `.value` attribute.
             if hasattr(value, "setValue"):
-                value.setValue(f"{x} {y} {z}")
+                value.setValue(translation_vector)
             return True
         except Exception:
             continue
@@ -89,7 +90,9 @@ def build_forceps_action_applier(
 
 def _stub_tool(tool: str) -> Callable[..., Callable[[Any, RobotCommand], None]]:
     def build(**_kwargs: Any) -> Callable[[Any, RobotCommand], None]:
-        raise NotImplementedError(f"SOFA tool {tool!r} is not implemented yet.")
+        raise NotImplementedError(
+            f"SOFA tool {tool!r} is registered for future work but is not implemented."
+        )
 
     return build
 

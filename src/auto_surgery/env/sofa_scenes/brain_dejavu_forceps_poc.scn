@@ -38,7 +38,7 @@
         <EulerImplicitSolver />
         <CGLinearSolver iterations="100" tolerance="1e-9" threshold="1e-9" />
 
-        <SparseGridTopology name="volume" fileTopology="/home/marshal/repos/neuroarm/DejaVu-main/scenes/brain/data/volume_simplified.obj" n="16 16 16"/>
+        <SparseGridTopology name="volume" fileTopology="${DEJAVU_ROOT}/scenes/brain/data/volume_simplified.obj" n="16 16 16"/>
         <MechanicalObject  template="Vec3d" name="gridDOFs"/>
         <UniformMass  totalMass="0.01" /> 
         <TetrahedronFEMForceField name="Corot" youngModulus="20" poissonRatio="0.40" method="large" rayleighStiffness="0.05" />
@@ -56,8 +56,8 @@
         <FixedConstraint template="Vec3d" indices="@ROI4.indices" drawSize="0"/>
 
         <Node name="Visual" activated="1">
-            <MeshOBJLoader name="loader" filename="/home/marshal/repos/neuroarm/DejaVu-main/scenes/brain/data/surface_full.obj"/>
-            <OglModel name="Visual" src="@loader" putOnlyTexCoords="true"    texturename="/home/marshal/repos/neuroarm/DejaVu-main/scenes/brain/data/texture_outpaint.png"
+            <MeshOBJLoader name="loader" filename="${DEJAVU_ROOT}/scenes/brain/data/surface_full.obj"/>
+            <OglModel name="Visual" src="@loader" putOnlyTexCoords="true"    texturename="${DEJAVU_ROOT}/scenes/brain/data/texture_outpaint.png"
             material="MAT Diffuse 1 255 255 255 1 Ambient 1 255 255 255 1 Specular 1 255 255 255 1 Emissive 1 255 255 255 1 Shininess 1 45" />
             <BarycentricMapping />
         </Node>
@@ -65,8 +65,8 @@
 
     <Node name="Skull">  
         <Node name="Visual" activated="1">
-            <MeshOBJLoader name="loader" filename="/home/marshal/repos/neuroarm/DejaVu-main/scenes/brain/data/surface_skull.obj" scale3d="0.92 0.92 0.92" translation="-5 -2.5 7.5"/>
-            <OglModel src="@loader" putOnlyTexCoords="true"    texturename="/home/marshal/repos/neuroarm/DejaVu-main/scenes/brain/data/texture.png" 
+            <MeshOBJLoader name="loader" filename="${DEJAVU_ROOT}/scenes/brain/data/surface_skull.obj" scale3d="0.92 0.92 0.92" translation="-5 -2.5 7.5"/>
+            <OglModel src="@loader" putOnlyTexCoords="true"    texturename="${DEJAVU_ROOT}/scenes/brain/data/texture.png" 
             material="MAT Diffuse 1 255 255 255 1 Ambient 1 255 255 255 1 Specular 1 255 255 255 1 Emissive 1 255 255 255 1 Shininess 1 45"            
             />
         </Node>
@@ -75,13 +75,13 @@
     <Node name="Forceps">
         <MeshOBJLoader
             name="forcepsLoader"
-            filename="/home/marshal/repos/neuroarm/DejaVu-main/scenes/liver/data/dv_tool/body_uv.obj"
+            filename="${DEJAVU_ROOT}/scenes/liver/data/dv_tool/body_uv.obj"
         />
         <OglModel
             name="forcepsVisual"
             src="@forcepsLoader"
             translation="0 -30 40"
-            texturename="/home/marshal/repos/neuroarm/DejaVu-main/scenes/liver/data/dv_tool/instru.png"
+            texturename="${DEJAVU_ROOT}/scenes/liver/data/dv_tool/instru.png"
             color="1 0.2 0.2 1"
         />
     </Node>

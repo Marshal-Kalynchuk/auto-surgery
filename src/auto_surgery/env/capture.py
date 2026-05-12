@@ -50,7 +50,6 @@ class SofaNativeRgbCapture:
 
     def pre_init_hook(self, root_node: Any, config: EnvConfig) -> None:
         """Attach the OffscreenCamera before Sofa.Simulation.init(root) runs."""
-        del config
         attach_capture_camera(root_node, width=self._width, height=self._height)
 
 

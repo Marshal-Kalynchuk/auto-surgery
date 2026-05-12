@@ -8,18 +8,16 @@ from pathlib import Path
 from auto_surgery.env.capture import SofaNativeRgbCapture
 from auto_surgery.env.sofa import SofaEnvironment
 from auto_surgery.env.sofa_tools import build_forceps_action_applier
+from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_brain_forceps_scene_path
 from auto_surgery.schemas.commands import RobotCommand
 from auto_surgery.schemas.manifests import EnvConfig
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_FORCEPS_SCENE = (
-    _REPO_ROOT / "src" / "auto_surgery" / "env" / "sofa_scenes" / "brain_dejavu_forceps_poc.scn"
-)
-
-
-def run_dejavu_forceps_smoke(*, scene_path: str, steps: int = 2) -> list[Path]:
+def run_dejavu_forceps_smoke(
+    *, scene_path: str | None = None, steps: int = 2
+) -> list[Path]:
     if steps <= 0:
         raise ValueError("steps must be greater than 0 for screenshot capture.")
+    scene_path = resolve_brain_forceps_scene_path(scene_path)
 
     action_applier = build_forceps_action_applier()
     capture = SofaNativeRgbCapture()
@@ -55,14 +53,15 @@ def run_dejavu_forceps_smoke(*, scene_path: str, steps: int = 2) -> list[Path]:
             assert screenshot_path.stat().st_size > 0, f"Screenshot empty: {screenshot_path}"
             outputs.append(screenshot_path)
 
-        print(str(outputs[0]))
         return outputs
 
 
 def main() -> None:
-    scene_path = _DEFAULT_FORCEPS_SCENE
-    run_dejavu_forceps_smoke(scene_path=str(scene_path))
+    run_dejavu_forceps_smoke(steps=2)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        "Direct execution of this module is deprecated. "
+        "Use: uv run auto-surgery sofa-forceps-smoke."
+    )

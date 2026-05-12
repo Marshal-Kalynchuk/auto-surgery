@@ -115,26 +115,58 @@ PY
    - Compare source and derived datasets: frame count parity + aligned `frame_index`.
    - Keep command vectors/`command_echo` parity for the same joint key set (`j0` at Stage-0).
 
-## CLI
+## CLI entrypoints (single surface)
+
+Preferred usage routes all scripts through `auto-surgery`:
 
 ```bash
-uv run auto-surgery smoke --skip-gpu   # CPU-only import checks
-uv run auto-surgery smoke              # full CUDA smoke when torch+GPU present
+uv run auto-surgery smoke --skip-gpu
+uv run auto-surgery capture-brain-forceps-video --qgl-view <path> --frames 180
+uv run auto-surgery capture-brain-forceps-pngs --qgl-view <path> --frames 180
+uv run auto-surgery run-one-episode --storage-root-uri file:///tmp/auto-surgery-sofa-smoke/ --case-id demo --session-id s1
+uv run auto-surgery train-idm --dataset-manifest-uri file:///tmp/auto-surgery-sofa-smoke/cases/demo/sessions/s1/manifest.json --out-ckpt-uri /tmp/idm.pt
+uv run auto-surgery extract-pseudo-actions --dataset-manifest-uri ... --idm-ckpt-uri ... --out-root-uri file:///tmp/auto-surgery-sofa-smoke/ --out-case-id demo_derived --out-session-id s2
+uv run auto-surgery render-rollout-preview --storage-root-uri file:///tmp/auto-surgery-sofa-smoke/ --case-id demo_derived --session-id s2 --output /tmp/preview.gif
+uv run auto-surgery sofa-forceps-smoke --steps 2
+```
 
+Legacy `python -m` entrypoints are intentionally deprecated in favor of this unified surface.
+
+## Captures
+
+All capture commands require the SOFA conda environment. Use the helper script:
+
+```bash
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [[ -z "${AUTO_SURGERY_DEJAVU_ROOT:-}" ]]; then
+  echo "AUTO_SURGERY_DEJAVU_ROOT is required for DejaVu capture."
+  exit 1
+fi
 
 # Capture brain-forceps rollout as mp4 in one command
-uv run auto-surgery capture-brain-forceps-video \
-  --qgl-view "$REPO_ROOT/DejaVu-main/scenes/brain/brain.scn.qglviewer.view" \
+bash infra/sofa/with-sofa.sh uv run auto-surgery capture-brain-forceps-video \
+  --qgl-view "$AUTO_SURGERY_DEJAVU_ROOT/scenes/brain/brain.scn.qglviewer.view" \
   --frames 180 \
   --fps 30 \
   --output "$REPO_ROOT/artifacts/brain_forceps.mp4"
 
-uv run auto-surgery capture-brain-forceps-pngs \
-  --qgl-view "$REPO_ROOT/DejaVu-main/scenes/brain/brain.scn.qglviewer.view" \
+bash infra/sofa/with-sofa.sh uv run auto-surgery capture-brain-forceps-pngs \
+  --qgl-view "$AUTO_SURGERY_DEJAVU_ROOT/scenes/brain/brain.scn.qglviewer.view" \
   --frames 180 \
   --output-dir "$REPO_ROOT/artifacts" \
   --prefix brain_forceps_sample
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for system architecture.
+The `with-sofa.sh` script handles conda activation and `.env.sofa` setup automatically.
+
+For smoke testing or validation of the SOFA runtime itself:
+
+```bash
+bash infra/sofa/with-sofa.sh python - <<'PY'
+from auto_surgery.env.sofa_rgb_native import validate_native_capture_runtime
+validate_native_capture_runtime()
+print("offscreen camera available")
+PY
+```
+
+See [docs/library/ARCHITECTURE.md](docs/library/ARCHITECTURE.md) for system architecture.

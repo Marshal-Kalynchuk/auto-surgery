@@ -1,16 +1,47 @@
+# Python / tooling cache
 .venv/
+.venv*/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+
+# Build / packaging artifacts
 dist/
+build/
 *.egg-info/
+*.eggs/
+site/
+
+# ML / experiment outputs
 mlruns/
 checkpoints/
+artifacts/
+
+# Data artifacts
 *.parquet
+*.pt
+
+# Logs / temp
 .coverage
 htmlcov/
 *.log
-artifacts/
+*.out
+*.tmp
+tmp/
+temp/
 
+# Native/shared objects
+*.so
+*.dylib
+*.dll
+
+# OS / editor cruft
+.DS_Store
+
+# Generated env helpers
+.env.sofa
+
+# Cursor local state
 .cursor/

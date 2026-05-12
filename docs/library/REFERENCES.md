@@ -1,8 +1,8 @@
 # External References
 
-**Purpose:** Canonical upstream links for the models, libraries, and datasets referenced by `docs/ARCHITECTURE.md` and `docs/ARCHITECTURE_THESIS.md`.
+**Purpose:** Canonical upstream links for the models, libraries, and datasets referenced by `docs/library/ARCHITECTURE.md` and `docs/library/ARCHITECTURE_THESIS.md`.
 
-**Verified against:** `docs/ARCHITECTURE.md` v2.5 and `docs/ARCHITECTURE_THESIS.md` on 2026-05-07. Updated with comparator/baseline citations 2026-05-07 to support the thesis's positioning sections.
+**Verified against:** `docs/library/ARCHITECTURE.md` v2.5 and `docs/library/ARCHITECTURE_THESIS.md` on 2026-05-07. Updated with comparator/baseline citations 2026-05-07 to support the thesis's positioning sections.
 
 Use this file as the first stop before broad web search. Keep agent and rule files pointed here instead of duplicating long link lists.
 

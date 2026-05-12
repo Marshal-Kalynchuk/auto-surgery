@@ -7,13 +7,14 @@ import math
 import shutil
 import subprocess
 import tempfile
-import sys
 from pathlib import Path
 
 from auto_surgery.env.capture import SofaNativeRgbCapture
 from auto_surgery.env.sofa import SofaEnvironment
-from auto_surgery.env.sofa_rgb_native import attach_capture_camera, SofaNativeRenderError
+from auto_surgery.env.sofa_rgb_native import attach_capture_camera
+from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_brain_forceps_scene_path
 from auto_surgery.env.sofa_tools import build_forceps_action_applier
+from auto_surgery.env.action_generators import build_sine_joint_position
 from auto_surgery.schemas.commands import RobotCommand
 from auto_surgery.schemas.manifests import EnvConfig
 
@@ -25,19 +26,7 @@ def _repo_root() -> Path:
 
 
 def _resolve_scene_path(path: str | None) -> str:
-    if path is not None:
-        return str(Path(path).expanduser().resolve())
-
-    return str(
-        (
-            _repo_root()
-            / "src"
-            / "auto_surgery"
-            / "env"
-            / "sofa_scenes"
-            / "brain_dejavu_forceps_poc.scn"
-        ).resolve()
-    )
+    return resolve_brain_forceps_scene_path(path)
 
 
 def _distance(point_a: tuple[float, float, float], point_b: tuple[float, float, float]) -> float:
@@ -180,7 +169,8 @@ def build_capture_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to a SOFA .scn scene file. Defaults to "
-            "src/auto_surgery/env/sofa_scenes/brain_dejavu_forceps_poc.scn"
+            "src/auto_surgery/env/sofa_scenes/brain_dejavu_forceps_poc.scn "
+            "(resolved with AUTO_SURGERY_DEJAVU_ROOT placeholders)."
         ),
     )
     parser.add_argument(
@@ -328,10 +318,12 @@ def build_video_parser() -> argparse.ArgumentParser:
 
 
 def _build_action(step: int, args: argparse.Namespace) -> float:
-    return (
-        args.joint_start
-        + args.joint_step * step
-        + args.joint_sine_amplitude * math.sin(args.joint_sine_frequency * step)
+    return build_sine_joint_position(
+        step,
+        joint_start=args.joint_start,
+        joint_step=args.joint_step,
+        amplitude=args.joint_sine_amplitude,
+        phase_scale=args.joint_sine_frequency,
     )
 
 
@@ -395,6 +387,7 @@ def run_capture_brain_forceps_pngs(args: argparse.Namespace) -> list[Path]:
 
         out_path.write_bytes(payload["bytes"])
         written.append(out_path)
+        _print_progress_bar(step + 1, args.frames, label="Capturing frames")
 
     return written
 
@@ -412,6 +405,9 @@ def _run_ffmpeg(frames: list[Path], fps: float, output: Path) -> None:
         tmp_root = Path(tmp_dir)
         for index, frame_path in enumerate(frames):
             shutil.copy(frame_path, tmp_root / f"frame_{index:06d}.png")
+            _print_progress_bar(index + 1, len(frames), label="Copying frames")
+
+        _print_progress_bar(1, 1, label="Encoding video")
 
         cmd = [
             ffmpeg,
@@ -421,9 +417,9 @@ def _run_ffmpeg(frames: list[Path], fps: float, output: Path) -> None:
             "-i",
             str(tmp_root / "frame_%06d.png"),
             "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
+            "mpeg4",
+            "-q:v",
+            "5",
             "-r",
             f"{fps:.6f}",
             str(output),
@@ -435,6 +431,21 @@ def _infer_video_output_path(args: argparse.Namespace) -> Path:
     if args.output is not None:
         return Path(args.output)
     return Path(args.output_dir) / f"{args.prefix}_video.mp4"
+
+
+def _print_progress_bar(current: int, total: int, *, label: str, width: int = 30) -> None:
+    if total <= 0:
+        return
+    current = min(max(0, current), total)
+    ratio = current / total
+    filled = int(ratio * width)
+    bar = "#" * filled + "-" * (width - filled)
+    percent = int(ratio * 100)
+    print(
+        f"\r{label}: [{bar}] {percent:3d}% ({current}/{total})",
+        end="" if current < total else "\n",
+        flush=True,
+    )
 
 
 def run_capture_brain_forceps_video(args: argparse.Namespace) -> Path:
@@ -472,24 +483,11 @@ def run_capture_video_cli(argv: list[str] | None = None) -> Path:
 
 
 def main() -> None:
-    parser = build_capture_parser()
-    args = parser.parse_args()
-    try:
-        outputs = run_capture_brain_forceps_pngs(args)
-    except SofaNativeRenderError as exc:
-        print(
-            "SOFA offscreen runtime not available.\n"
-            "Run `conda activate sofa-env` and `source .env.sofa`, then retry.\n"
-            f"Original error: {exc!r}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    except Exception as exc:  # pragma: no cover - passthrough for CLI usability
-        print(f"Capture failed: {exc!r}", file=sys.stderr)
-        raise SystemExit(1)
-
-    for path in outputs:
-        print(path)
+    raise SystemExit(
+        "Direct execution of this module is deprecated. "
+        "Use: uv run auto-surgery capture-brain-forceps-video or "
+        "uv run auto-surgery capture-brain-forceps-pngs."
+    )
 
 
 if __name__ == "__main__":

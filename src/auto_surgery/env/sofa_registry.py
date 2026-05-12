@@ -1,5 +1,3 @@
-"""Scene registry hooks for DejaVu-based SOFA scenes (brain enabled; other organs stubbed)."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -10,9 +8,8 @@ from auto_surgery.env.sofa_scenes.brain_dejavu import create_brain_scene
 
 def _stub_scene(scene: str) -> SofaSceneFactory:
     def _factory(root_node: Any, config: Any) -> None:
-        del root_node, config
         raise NotImplementedError(
-            f"SOFA scene {scene!r} is registered for future expansion but is not implemented yet."
+            f"SOFA scene {scene!r} is registered for future expansion but is not implemented."
         )
 
     return _factory

@@ -45,6 +45,7 @@ readonly PLUGIN_REF="${SOFA_OFFSCREEN_CAMERA_REF:-v25.06}"
 readonly PLUGIN_LIB="${PLUGIN_INSTALL_PREFIX}/lib/libSofaOffscreenCamera.so"
 readonly PYTHON_VER="$("${CONDA_PREFIX}/bin/python" -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
 readonly PLUGIN_PYTHON_SITE="${PLUGIN_INSTALL_PREFIX}/lib/${PYTHON_VER}/site-packages"
+readonly CONDA_PYTHON_SITE="${CONDA_PREFIX}/lib/${PYTHON_VER}/site-packages"
 
 if "${CONDA_PREFIX}/bin/python" - <<'PY'
 import importlib.util
@@ -100,7 +101,6 @@ fi
 export SOFA_HOME="\$CONDA_PREFIX"
 export SOFA_ROOT="\$CONDA_PREFIX"
 export SOFA_PLUGIN_PATH="\$CONDA_PREFIX/plugins/SofaOffscreenCamera/lib\${SOFA_PLUGIN_PATH:+:\$SOFA_PLUGIN_PATH}"
-export PYTHONPATH="${PLUGIN_PYTHON_SITE}:\$PYTHONPATH"
 export LD_LIBRARY_PATH="\$CONDA_PREFIX/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 export PATH="\$CONDA_PREFIX/bin\${PATH:+:\$PATH}"
 

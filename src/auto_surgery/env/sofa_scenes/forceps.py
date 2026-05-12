@@ -11,41 +11,27 @@ The action-applier in ``src/auto_surgery/training/sofa_forceps_smoke.py`` expect
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
+
+from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_dejavu_asset_path
 
 # Reuse DejaVu tool geometry so we don't need to source new assets.
 
 
-def _resolve_dejavu_root() -> Path:
-    env_root = os.environ.get("DEJAVU_ROOT")
-    if env_root:
-        candidate = Path(env_root).expanduser()
-        if candidate.exists():
-            return candidate
-    for candidate in (
-        Path.home() / "repos" / "neuroarm" / "DejaVu-main",
-        Path.home() / "DejaVu-main",
-    ):
-        if candidate.exists():
-            return candidate
-    return Path(env_root or (Path.home() / "DejaVu-main")).expanduser()
-
-
-_DEJAVU_ROOT = _resolve_dejavu_root()
-DEFAULT_FORCEPS_MESH = str(_DEJAVU_ROOT / "scenes" / "liver" / "data" / "dv_tool" / "body_uv.obj")
-DEFAULT_FORCEPS_TEXTURE = str(
-    _DEJAVU_ROOT / "scenes" / "liver" / "data" / "dv_tool" / "instru.png"
-)
+def _default_forceps_mesh() -> tuple[str, str]:
+    root = resolve_dejavu_asset_path("scenes/liver/data/dv_tool")
+    return (
+        str(root / "body_uv.obj"),
+        str(root / "instru.png"),
+    )
 
 
 def create_forceps_node(
     root_node: Any,
     *,
     node_name: str = "Forceps",
-    mesh_filename: str = DEFAULT_FORCEPS_MESH,
-    texture_filename: str | None = DEFAULT_FORCEPS_TEXTURE,
+    mesh_filename: str | None = None,
+    texture_filename: str | None = None,
     initial_translation: tuple[float, float, float] = (0.0, -30.0, 40.0),
     color: str = "1 0.2 0.2 1",
 ) -> Any:
@@ -57,6 +43,13 @@ def create_forceps_node(
     - texture_filename: optional PNG texture for the instrument
     - initial_translation: initial pose (world translation) of the visual model
     """
+
+    if mesh_filename is None or texture_filename is None:
+        default_mesh, default_texture = _default_forceps_mesh()
+        if mesh_filename is None:
+            mesh_filename = default_mesh
+        if texture_filename is None:
+            texture_filename = default_texture
 
     forceps_node = root_node.addChild(node_name)
 

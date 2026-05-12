@@ -8,8 +8,17 @@ from pathlib import Path
 
 import typer
 
+from auto_surgery.env.capture import default_captures
 from auto_surgery.recording import brain_forceps
+from auto_surgery.schemas.manifests import SceneConfig
 from auto_surgery.training.bootstrap import run_m1_tiny_overfit, run_m2_contrastive_stub
+from auto_surgery.training.extract_pseudo_actions import (
+    extract_pseudo_actions as run_extract_pseudo_actions,
+)
+from auto_surgery.training.idm_train import _load_dataset_manifest_from_uri, train_idm as run_train_idm
+from auto_surgery.training.render_rollout_video import build_preview
+from auto_surgery.training.sofa_smoke import run_sofa_rollout_dataset
+from auto_surgery.training.sofa_forceps_smoke import run_dejavu_forceps_smoke
 from auto_surgery.training.smoke import run_blackwell_smoke
 
 app = typer.Typer(no_args_is_help=True)
@@ -413,6 +422,137 @@ def capture_brain_forceps_pngs(
     frame_paths = brain_forceps.run_capture_brain_forceps_pngs(command_args)
     for path in frame_paths:
         typer.echo(str(path))
+
+
+@app.command()
+def run_one_episode(
+    storage_root_uri: str = typer.Option(..., help="fsspec root URI ending with '/'."),
+    case_id: str = typer.Option(...),
+    session_id: str = typer.Option(...),
+    sofa_scene_path: str | None = typer.Option(
+        None,
+        help="Optional `.scn` path; when omitted, `scene_id` selects the Python factory.",
+    ),
+    steps: int = typer.Option(64),
+    seed: int = typer.Option(7),
+    stub: bool = typer.Option(True, help="Use stub SOFA backend when true."),
+    rgb: bool = typer.Option(False, help="Persist native SOFA RGB blobs."),
+    scene_id: str = typer.Option("dejavu_brain"),
+    tool_id: str = typer.Option("forceps"),
+) -> None:
+    """Materialize one dataset manifest + optional RGB blobs."""
+    captures = default_captures(include_stereo_depth_stubs=False) if rgb else []
+    scene_cfg = SceneConfig(
+        scene_id=scene_id,
+        tool_id=tool_id,
+        scene_xml_path=sofa_scene_path,
+    )
+    ds = run_sofa_rollout_dataset(
+        storage_root_uri=storage_root_uri,
+        case_id=case_id,
+        session_id=session_id,
+        sofa_scene_path=None,
+        scene_config=scene_cfg,
+        fallback_to_stub=stub,
+        steps=steps,
+        seed=seed,
+        capture_modalities=captures if rgb else None,
+    )
+    typer.echo(json.dumps(ds.model_dump(), indent=2))
+
+
+@app.command()
+def train_idm(
+    dataset_manifest_uri: str = typer.Option(..., help="fsspec URI to DatasetManifest JSON."),
+    out_ckpt_uri: str = typer.Option(..., help="fsspec URI to write .pt checkpoint."),
+    steps: int = typer.Option(300),
+    lr: float = typer.Option(2e-3),
+    hidden_dim: int = typer.Option(256),
+    device: str | None = typer.Option(None),
+) -> None:
+    """Train Stage-0 IDM on a dataset manifest."""
+    manifest = _load_dataset_manifest_from_uri(dataset_manifest_uri)
+    metrics = run_train_idm(
+        manifest,
+        out_ckpt_uri=out_ckpt_uri,
+        steps=steps,
+        lr=lr,
+        hidden_dim=hidden_dim,
+        device=device,
+        dataset_manifest_path=dataset_manifest_uri,
+    )
+    typer.echo(json.dumps(metrics, indent=2))
+
+
+@app.command()
+def extract_pseudo_actions(
+    dataset_manifest_uri: str = typer.Option(..., help="fsspec URI to DatasetManifest JSON."),
+    idm_ckpt_uri: str = typer.Option(..., help="fsspec URI to saved IDM checkpoint."),
+    out_root_uri: str = typer.Option(..., help="fsspec URI destination root."),
+    out_case_id: str = typer.Option(...),
+    out_session_id: str = typer.Option(...),
+    capture_rig_id: str = typer.Option("rig"),
+    clock_source: str = typer.Option("monotonic"),
+    software_git_sha: str = typer.Option("stage0"),
+    device: str | None = typer.Option(None),
+) -> None:
+    """Run IDM over logged frames and write derived pseudo-action dataset."""
+    manifest = _load_dataset_manifest_from_uri(dataset_manifest_uri)
+    ds = run_extract_pseudo_actions(
+        manifest,
+        idm_ckpt_uri=idm_ckpt_uri,
+        out_root_uri=out_root_uri,
+        out_case_id=out_case_id,
+        out_session_id=out_session_id,
+        capture_rig_id=capture_rig_id,
+        clock_source=clock_source,
+        software_git_sha=software_git_sha,
+        device=device,
+    )
+    typer.echo(json.dumps(ds.model_dump(), indent=2))
+
+
+@app.command()
+def render_rollout_preview(
+    storage_root_uri: str = typer.Option(...),
+    case_id: str = typer.Option(...),
+    session_id: str = typer.Option(...),
+    duration_sec: float = typer.Option(10.0, help="Target output duration in seconds."),
+    output: str = typer.Option(
+        "/tmp/sofa_rollout_preview.gif", help="Output path (supports .mp4 or .gif)."
+    ),
+    prefer_mp4: bool = typer.Option(
+        False, help="Allow MP4 when output extension is .mp4; otherwise fallback to GIF."
+    ),
+) -> None:
+    """Render rollout preview clip from persisted RGB blobs."""
+    output_path = Path(output)
+    build_preview(
+        storage_root_uri=storage_root_uri,
+        case_id=case_id,
+        session_id=session_id,
+        duration_seconds=duration_sec,
+        output_path=output_path,
+        prefer_mp4=prefer_mp4,
+    )
+    typer.echo(f"preview written: {output_path}")
+
+
+@app.command()
+def sofa_forceps_smoke(
+    scene_path: str | None = typer.Option(
+        None,
+        help="Optional .scn scene path. Defaults to resolved DejaVu placeholder scene.",
+    ),
+    steps: int = typer.Option(2, min=1),
+) -> None:
+    """Run quick native SOFA forceps smoke capture and print first frame path."""
+    outputs = run_dejavu_forceps_smoke(scene_path=scene_path, steps=steps)
+    if outputs:
+        typer.echo(str(outputs[0]))
+    else:
+        raise RuntimeError("No outputs were produced by sofa forceps smoke.")
+
 
 
 def main() -> None:

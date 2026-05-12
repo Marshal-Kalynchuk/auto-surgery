@@ -1,9 +1,9 @@
 # Brain-Aligned Architecture (Research Vision)
 
 **Status:** Research vision — not the engineering spec
-**Canonical spec:** `../ARCHITECTURE.md`
+**Canonical spec:** `../library/ARCHITECTURE.md`
 **Relationship:** This document captures a brain-region-aligned reorganization of the canonical architecture. It is preserved as a long-term research direction, not as the current implementation plan. Several useful corrections from this doc (three-timescale memory, embedding-first entity record, Hopfield as fast-weight memory, fast forward model framing) were back-ported into the canonical spec; the brain-region renaming was not, because it does not change implementation and oversells the alignment claim.
-**Preserves principles from:** `../ARCHITECTURE_CONDENSED.md` v0.8 §4 (embedding-first state representation)
+**Preserves principles from:** `../library/ARCHITECTURE.md` v0.8 §4 (embedding-first state representation)
 
 ---
 

@@ -94,14 +94,17 @@ uv run python -c "from auto_surgery.env.sofa_rgb_native import validate_native_c
 
 For the Phase-1 / POC brain scene we use your DejaVu checkout (downloaded by you).
 
-Set `DEJAVU_ROOT` to your local DejaVu checkout:
+Set `AUTO_SURGERY_DEJAVU_ROOT` to your local DejaVu checkout:
 
 ```bash
-DEJAVU_ROOT="${DEJAVU_ROOT:-$HOME/DejaVu-main}"
+if [[ -z "${AUTO_SURGERY_DEJAVU_ROOT:-}" ]]; then
+  echo "AUTO_SURGERY_DEJAVU_ROOT is required for non-stub DejaVu runs."
+  exit 1
+fi
 ```
 
-- `$DEJAVU_ROOT/scenes/brain/brain.scn`
-- `$DEJAVU_ROOT/scenes/brain/brain.py` (requires SofaPython3 plugin support)
+- `$AUTO_SURGERY_DEJAVU_ROOT/scenes/brain/brain.scn`
+- `$AUTO_SURGERY_DEJAVU_ROOT/scenes/brain/brain.py` (requires SofaPython3 plugin support)
 
 This repo also includes a local wrapper scene specifically for the forceps POC:
 
@@ -140,13 +143,9 @@ This smoke test writes **real PNG files** under `/tmp` by capturing native SOFA 
 cd "$REPO_ROOT"
 source .env.sofa
 uv run python - <<PY
-from pathlib import Path
 from auto_surgery.training.sofa_forceps_smoke import run_dejavu_forceps_smoke
 
-scene_path = Path(
-    "$REPO_ROOT/src/auto_surgery/env/sofa_scenes/brain_dejavu_forceps_poc.scn"
-)
-run_dejavu_forceps_smoke(scene_path=str(scene_path), steps=1)
+run_dejavu_forceps_smoke(steps=1)
 PY
 ```
 

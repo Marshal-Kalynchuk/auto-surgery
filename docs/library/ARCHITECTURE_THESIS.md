@@ -1,6 +1,6 @@
 # Autonomous Neurosurgery as Structured Learned Control: An Architectural Thesis
 
-> **Status:** Theoretical position paper, not a results paper. This document proposes an architecture and a falsifiable research program; it does not claim experimental validation. Companion documents are `docs/ARCHITECTURE.md` (canonical engineering specification) only. External citations are tracked in `docs/REFERENCES.md`.
+> **Status:** Theoretical position paper, not a results paper. This document proposes an architecture and a falsifiable research program; it does not claim experimental validation. Companion documents are `docs/library/ARCHITECTURE.md` (canonical engineering specification) only. External citations are tracked in `docs/library/REFERENCES.md`.
 
 ## Abstract
 
@@ -68,7 +68,7 @@ We assert that surgical autonomy will scale only if the system can learn continu
 
 ## 3. Related Work and Positioning
 
-Sections 1.1–1.3 already established the clinical problem, so this section does not restate those failure modes. Instead, it positions the architecture against the closest prior paradigms, states which ideas are retained, and identifies where the thesis departs from them. Cited systems are tracked in `docs/REFERENCES.md`.
+Sections 1.1–1.3 already established the clinical problem, so this section does not restate those failure modes. Instead, it positions the architecture against the closest prior paradigms, states which ideas are retained, and identifies where the thesis departs from them. Cited systems are tracked in `docs/library/REFERENCES.md`.
 
 ### 3.1 Surgical autonomy systems and skill-library paradigm
 

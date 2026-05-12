@@ -1,7 +1,7 @@
 # Autonomous Surgery Architecture
 
 **Status:** v2.5 — engineering spec
-**Preserves principles from:** `ARCHITECTURE_CONDENSED.md` v0.8 §4 (embedding-first state, multi-loop control, engineered safety boundary)
+**Preserves principles from:** `ARCHITECTURE_THESIS.md` (embedding-first state, multi-loop control, engineered safety boundary)
 **Risk and validation plan:** `RISKS_AND_VALIDATION.md`
 **Scope:** End-to-end architecture for autonomous surgical robotics on KUKA KR 6-2 (development) and neuroArm (target)
 

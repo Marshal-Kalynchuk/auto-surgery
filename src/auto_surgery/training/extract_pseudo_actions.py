@@ -98,7 +98,7 @@ def extract_pseudo_actions(
             commanded_action=frame.commanded_action,
             executed_action=predicted,
             safety_decision=frame.safety_decision,
-            skill_state=frame.skill_state,
+            entity_state=frame.entity_state,
             surgeon_input=frame.surgeon_input,
             outcome_label=frame.outcome_label,
         )
@@ -126,5 +126,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        "Direct execution of this module is deprecated. "
+        "Use: uv run auto-surgery extract-pseudo-actions."
+    )
 

@@ -15,6 +15,21 @@ import fsspec
 from PIL import Image
 
 
+def _print_progress_bar(current: int, total: int, *, label: str, width: int = 30) -> None:
+    if total <= 0:
+        return
+    current = min(max(0, current), total)
+    ratio = current / total
+    filled = int(ratio * width)
+    bar = "#" * filled + "-" * (width - filled)
+    percent = int(ratio * 100)
+    print(
+        f"\r{label}: [{bar}] {percent:3d}% ({current}/{total})",
+        end="" if current < total else "\n",
+        flush=True,
+    )
+
+
 def _session_rgb_frame_uris(
     *, storage_root_uri: str, case_id: str, session_id: str
 ) -> list[str]:
@@ -32,9 +47,10 @@ def _session_rgb_frame_uris(
 
 def _read_frames(frame_uris: list[str], fs: Any) -> list[Image.Image]:
     images: list[Image.Image] = []
-    for uri in frame_uris:
+    for index, uri in enumerate(frame_uris):
         with fs.open(uri, "rb") as fp:
             images.append(Image.open(io.BytesIO(fp.read())).convert("RGB"))
+        _print_progress_bar(index + 1, len(frame_uris), label="Reading frames")
     return images
 
 
@@ -44,6 +60,7 @@ def _write_mp4_with_ffmpeg(frames: list[Image.Image], fps: float, output: Path) 
         for idx, frame in enumerate(frames):
             frame_path = tmp_root / f"frame_{idx:06d}.png"
             frame.save(frame_path)
+            _print_progress_bar(idx + 1, len(frames), label="Preparing MP4 frames")
 
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
@@ -167,4 +184,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        "Direct execution of this module is deprecated. "
+        "Use: uv run auto-surgery render-rollout-preview."
+    )

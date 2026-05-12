@@ -1,6 +1,6 @@
 # Architecture Thesis Deep Research Findings (Parallel)
 
-This file consolidates the deep-research outputs generated for `docs/ARCHITECTURE_THESIS.md` into one digestible overview.
+This file consolidates the deep-research outputs generated for `docs/library/ARCHITECTURE_THESIS.md` into one digestible overview.
 
 ## Source artifacts
 

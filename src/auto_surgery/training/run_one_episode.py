@@ -60,4 +60,7 @@ def cli() -> None:
 
 
 if __name__ == "__main__":
-    cli()
+    raise SystemExit(
+        "Direct execution of this module is deprecated. "
+        "Use: uv run auto-surgery run-one-episode."
+    )

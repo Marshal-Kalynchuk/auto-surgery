@@ -15,6 +15,46 @@ class ActionGenerator(Protocol):
     def next_command(self, *, step_index: int, timestamp_ns: int) -> RobotCommand: ...
 
 
+def build_sine_joint_command(
+    step_index: int,
+    *,
+    base_ns: int = 1_000_000,
+    amplitude: float = 0.05,
+    phase_scale: float = 0.1,
+    joint_start: float = 0.0,
+    joint_step: float = 0.0,
+    joint_key: str = "j0",
+) -> RobotCommand:
+    """Build a deterministic one-joint sine command."""
+
+    joint = build_sine_joint_position(
+        step_index,
+        joint_start=joint_start,
+        joint_step=joint_step,
+        amplitude=amplitude,
+        phase_scale=phase_scale,
+    )
+    return RobotCommand(
+        timestamp_ns=base_ns + step_index,
+        joint_positions={joint_key: float(joint)},
+        representation="joint",
+    )
+
+
+def build_sine_joint_position(
+    step_index: int,
+    *,
+    joint_start: float = 0.0,
+    joint_step: float = 0.0,
+    amplitude: float = 0.05,
+    phase_scale: float = 0.1,
+) -> float:
+    """Build a one-dimensional sine+offset joint trajectory sample."""
+
+    t = step_index * phase_scale
+    return float(joint_start + joint_step * step_index + amplitude * math.sin(t))
+
+
 class SineJointGenerator:
     """Deterministic single-joint sinusoid (legacy Stage-0 smoke)."""
 
@@ -30,12 +70,14 @@ class SineJointGenerator:
         self._phase_scale = phase_scale
 
     def next_command(self, *, step_index: int, timestamp_ns: int) -> RobotCommand:
-        t = step_index * self._phase_scale
-        joint = self._amplitude * math.sin(t)
-        return RobotCommand(
-            timestamp_ns=timestamp_ns,
-            joint_positions={self._joint_key: float(joint)},
-            representation="joint",
+        return build_sine_joint_command(
+            step_index,
+            base_ns=timestamp_ns - step_index,
+            amplitude=self._amplitude,
+            phase_scale=self._phase_scale,
+            joint_key=self._joint_key,
+            joint_start=0.0,
+            joint_step=0.0,
         )
 
 

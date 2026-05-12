@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from auto_surgery.schemas.commands import RobotCommand
 from auto_surgery.schemas.scene import SceneGraph
@@ -43,9 +43,24 @@ class LoggedFrame(BaseModel):
     commanded_action: RobotCommand | None = None
     executed_action: RobotCommand | None = None
     safety_decision: SafetyDecision | None = None
+    entity_state: dict[str, Any] | None = Field(
+        default=None,
+        description="Entity-centric state snapshot for downstream consumers.",
+    )
     skill_state: dict[str, Any] | None = Field(
         default=None,
-        description="Legacy/audit field; None for substrate-driven operation.",
+        description="Deprecated alias for entity_state in archived Stage-0 logs.",
     )
     surgeon_input: TeleopInput | None = None
     outcome_label: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_skill_state(cls, values: dict[str, Any]) -> dict[str, Any]:
+        if (
+            isinstance(values, dict)
+            and values.get("entity_state") is None
+            and values.get("skill_state") is not None
+        ):
+            values["entity_state"] = values["skill_state"]
+        return values

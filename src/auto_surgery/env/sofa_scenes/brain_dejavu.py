@@ -13,38 +13,20 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_dejavu_root
 from auto_surgery.env.sofa_scenes.forceps import create_forceps_node
 from auto_surgery.schemas.manifests import EnvConfig
-
-
-def _resolve_dejavu_root() -> Path:
-    env_root = os.environ.get("DEJAVU_ROOT")
-    if env_root:
-        candidate = Path(env_root).expanduser()
-        if candidate.exists():
-            return candidate
-    for candidate in (
-        Path.home() / "repos" / "neuroarm" / "DejaVu-main",
-        Path.home() / "DejaVu-main",
-    ):
-        if candidate.exists():
-            return candidate
-    return Path(env_root or (Path.home() / "DejaVu-main")).expanduser()
-
-
-DEFAULT_DEJAVU_ROOT = _resolve_dejavu_root()
-DEFAULT_DEJAVU_BRAIN_PY = DEFAULT_DEJAVU_ROOT / "scenes/brain/brain.py"
 
 
 @dataclass(frozen=True)
 class BrainDejavuConfig:
     """Configuration for the wrapped DejaVu brain scene."""
 
-    dejavu_root: Path = DEFAULT_DEJAVU_ROOT
+    dejavu_root: Path = field(default_factory=resolve_dejavu_root)
     forceps_translation: tuple[float, float, float] = (0.0, -30.0, 40.0)
     camera_position: tuple[float, float, float] = (0.0, 30.0, 90.0)
     camera_look_at: tuple[float, float, float] = (0.0, 0.0, 0.0)

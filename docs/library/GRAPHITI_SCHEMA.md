@@ -48,7 +48,7 @@ Used to log architectural choices, trade-offs, and superseded decisions.
   },
   "supersedes": ["ADR-<old-id>"],
   "links": {
-    "primary": [{"type": "doc", "uri": "docs/ARCHITECTURE.md#..."}]
+    "primary": [{"type": "doc", "uri": "docs/library/ARCHITECTURE.md#..."}]
   }
 }
 ```
