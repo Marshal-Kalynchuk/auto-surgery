@@ -28,6 +28,7 @@ from auto_surgery.motion.primitives import (
 )
 from auto_surgery.motion.profile import min_jerk_velocity_scalar
 from auto_surgery.motion.sequencer import _Sequencer
+from auto_surgery.schemas.commands import Pose, Quaternion, Twist, Vec3, RobotCommand
 from auto_surgery.schemas.commands import (
     ControlFrame,
     ControlMode,
@@ -290,7 +291,7 @@ def _evaluate_reach(active: object, last_step: StepResult) -> TwistSceneTip:
     elapsed_s = float(getattr(active, "elapsed_s", 0.0))
     tau = _time_to_fraction(elapsed_s, duration_s)
 
-    if isinstance(primitive, Dwell):
+    if isinstance(primitive, Hold):
         return TwistSceneTip(
             Twist(
                 linear=Vec3(x=0.0, y=0.0, z=0.0),
@@ -298,7 +299,7 @@ def _evaluate_reach(active: object, last_step: StepResult) -> TwistSceneTip:
             )
         )
 
-    if isinstance(primitive, Approach):
+    if isinstance(primitive, Reach):
         camera_matrix, camera_position = _camera_basis(last_step)
         start_pose_scene = _camera_tool_to_scene(
             tool_pose=getattr(active, "started_at_pose_scene"),

@@ -108,29 +108,32 @@ def _quat_to_matrix(rotation: Quaternion) -> np.ndarray:
 
 def _look_at_rotation(
     pose: Pose,
-) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """Return (position, orientation_xyzw) derived from the pose.
+    
+    orientation is a quaternion in (x, y, z, w) order matching SOFA's Quat<SReal>.
+    """
     position = np.asarray([pose.position.x, pose.position.y, pose.position.z], dtype=float)
-    rotation = _quat_to_matrix(pose.rotation)
-    forward = rotation @ np.array([0.0, 0.0, -1.0], dtype=float)
-    up = rotation @ np.array([0.0, 1.0, 0.0], dtype=float)
-    up = _normalize(up, fallback=np.array([0.0, 1.0, 0.0], dtype=float))
-    look_at = position + forward
+    x = float(pose.rotation.x)
+    y = float(pose.rotation.y)
+    z = float(pose.rotation.z)
+    w = float(pose.rotation.w)
     return (
         (float(position[0]), float(position[1]), float(position[2])),
-        (float(look_at[0]), float(look_at[1]), float(look_at[2])),
-        (float(up[0]), float(up[1]), float(up[2])),
+        (x, y, z, w),
     )
 
 
 def _camera_block(scene: SceneConfig) -> str:
-    position, look_at, up = _look_at_rotation(scene.camera_extrinsics_scene)
+    position, orientation_xyzw = _look_at_rotation(scene.camera_extrinsics_scene)
     intrinsics = scene.camera_intrinsics
     if intrinsics.fy <= 0.0 or intrinsics.fy != intrinsics.fy:
         raise ValueError("CameraIntrinsics.fy must be finite and positive.")
     fov_deg = 2.0 * math.degrees(math.atan(intrinsics.height / (2.0 * intrinsics.fy)))
+    ox, oy, oz, ow = orientation_xyzw
     return (
-        f'<OffscreenCamera position="{_format_vec(position)}" lookAt="{_format_vec(look_at)}" '
-        f'up="{_format_vec(up)}" '
+        f'<OffscreenCamera position="{_format_vec(position)}" '
+        f'orientation="{_format_float(ox)} {_format_float(oy)} {_format_float(oz)} {_format_float(ow)}" '
         f'widthViewport="{intrinsics.width}" heightViewport="{intrinsics.height}" '
         f'fieldOfView="{_format_float(fov_deg)}" />'
     )

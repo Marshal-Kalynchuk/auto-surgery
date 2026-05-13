@@ -159,7 +159,7 @@ def test_render_template_includes_scaled_lighting_block(tmp_path: Path) -> None:
     assert "color=\"0.2 0.4 0.6\"" in text
 
 
-def test_render_template_camera_block_uses_up_and_fov_from_intrinsics(tmp_path: Path) -> None:
+def test_render_template_camera_block_uses_orientation_and_fov_from_intrinsics(tmp_path: Path) -> None:
     root = _write_fake_dejavu_root(tmp_path)
     scene = load_scene_config(SCENE_PATH).model_copy(
         update={
@@ -181,13 +181,16 @@ def test_render_template_camera_block_uses_up_and_fov_from_intrinsics(tmp_path: 
     text = rendered.read_text(encoding="utf-8")
     look_at_line = next(line for line in text.splitlines() if "OffscreenCamera" in line)
     assert 'position="1 2 3"' in look_at_line
-    assert 'lookAt="1 3 3"' in look_at_line
-    assert 'up="' in look_at_line
-    up_text = look_at_line.split('up="', 1)[1].split('"', 1)[0]
-    up_vals = [float(value) for value in up_text.split(" ")]
-    assert up_vals[0] == pytest.approx(0.0, abs=1e-12)
-    assert up_vals[1] == pytest.approx(0.0, abs=1e-12)
-    assert up_vals[2] == pytest.approx(1.0, abs=1e-12)
+    assert 'orientation="' in look_at_line
+    assert 'lookAt' not in look_at_line
+    assert 'up=' not in look_at_line
+    orientation_text = look_at_line.split('orientation="', 1)[1].split('"', 1)[0]
+    orientation_vals = [float(value) for value in orientation_text.split(" ")]
+    assert len(orientation_vals) == 4
+    assert orientation_vals[0] == pytest.approx(0.7071067811865476, abs=1e-6)
+    assert orientation_vals[1] == pytest.approx(0.0, abs=1e-12)
+    assert orientation_vals[2] == pytest.approx(0.0, abs=1e-12)
+    assert orientation_vals[3] == pytest.approx(0.7071067811865476, abs=1e-6)
     assert 'widthViewport="200"' in look_at_line
     assert 'heightViewport="100"' in look_at_line
     expected_fov = 2.0 * math.degrees(math.atan(100.0 / (2.0 * 400.0)))
