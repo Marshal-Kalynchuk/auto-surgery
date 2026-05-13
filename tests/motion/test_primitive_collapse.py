@@ -1,16 +1,19 @@
-import sys
 from pathlib import Path
+import sys
 import importlib.util
 
 
 def _load_primitives_module():
     module_path = Path(__file__).resolve().parents[2] / 'src' / 'auto_surgery' / 'motion' / 'primitives.py'
-    spec = importlib.util.spec_from_file_location('auto_surgery.motion.primitives', module_path)
-    module = importlib.util.module_from_spec(spec)
+    module_name = "_test_motion_primitives"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
     assert spec is not None and spec.loader is not None
-    # Register the module in sys.modules before executing to avoid issues with dataclass registration
-    sys.modules['auto_surgery.motion.primitives'] = module
-    spec.loader.exec_module(module)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(module_name, None)
     return module
 
 
@@ -54,6 +57,7 @@ def test_new_primitives_are_constructible():
         direction_hint_scene=Vec3(x=0.0, y=0.0, z=1.0),
         max_search_m=0.1,
         peak_speed_m_per_s=0.05,
+        duration_s=2.1,
         jaw_target_start=0.0,
         jaw_target_end=0.0,
     )

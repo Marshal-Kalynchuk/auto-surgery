@@ -6,7 +6,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from auto_surgery.motion.primitives import Approach
+from auto_surgery.motion.primitives import Hold, Reach
 from auto_surgery.motion.sequencer import MotionGeneratorConfig, PrimitiveKind, Sequencer, _EPS, _sample_point_in_volume
 from auto_surgery.schemas.commands import Pose, Quaternion, Vec3
 from auto_surgery.schemas.commands import Twist
@@ -111,7 +111,7 @@ def test_first_primitive_targets_first_volume_center_at_midpoint_duration() -> N
     seq.reset(_step())
 
     first = seq.next_primitive(_step(), 0.0)
-    assert isinstance(first, Approach)
+    assert isinstance(first, Reach)
     assert first.target_pose_scene.position == first_center
     assert first.duration_s == pytest.approx(0.4)
 
@@ -126,11 +126,11 @@ def test_next_primitive_is_lazy_for_first_output() -> None:
         assert sample_kind.call_count == 0
         assert first is not None
 
-        sample_kind.return_value = PrimitiveKind.DWELL
+        sample_kind.return_value = PrimitiveKind.HOLD
         second = seq.next_primitive(_step(), 0.0)
         assert sample_kind.call_count == 1
         assert second is not None
-        assert second.__class__.__name__ == "Dwell"
+        assert isinstance(second, Hold)
 
 
 def test_next_primitive_respects_zero_length_plan() -> None:

@@ -21,7 +21,14 @@ class CameraIntrinsics(BaseModel):
 
 
 class ToolState(BaseModel):
-    """Tool tip telemetry expressed in camera frame."""
+    """Tool tip telemetry expressed in scene frame.
+
+    The shaft ``MechanicalObject`` (Rigid3d) is integrated by SOFA in scene
+    coordinates and is read back unchanged by the forceps observer, so both
+    ``pose`` and ``twist`` are in scene frame. Action commands are still
+    carried in camera frame (``ControlFrame.CAMERA``) and are converted back
+    to scene frame by the tool action applier before writing to the MO.
+    """
 
     model_config = {"extra": "forbid"}
 

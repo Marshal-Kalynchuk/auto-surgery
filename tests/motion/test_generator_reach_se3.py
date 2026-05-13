@@ -1,80 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
 from types import SimpleNamespace
 
 import pytest
 
-import auto_surgery.motion.primitives as _primitives
 from auto_surgery.motion.primitives import Hold, Reach
 from auto_surgery.schemas.commands import Pose, Quaternion, SafetyMetadata, Twist, Vec3
 from auto_surgery.schemas.motion import MotionGeneratorConfig, MotionShaping
 from auto_surgery.schemas.results import StepResult
 from auto_surgery.schemas.sensors import CameraIntrinsics, CameraView, SafetyStatus, SensorBundle, ToolState
-
-
-if not hasattr(_primitives, "Approach"):
-    _primitives.Approach = Reach
-if not hasattr(_primitives, "Dwell"):
-    _primitives.Dwell = Hold
-
-
-@dataclass(frozen=True)
-class _CompatProbe:
-    target_pose_scene: Pose | None = None
-    hold_after_contact_s: float = 0.0
-    retract_distance_m: float = 0.0
-    retract_peak_speed_m_per_s: float = 0.0
-    duration_s: float = 0.0
-    jaw_target_start: float | None = None
-    jaw_target_end: float | None = None
-
-
-@dataclass(frozen=True)
-class _CompatRetract:
-    distance_m: float = 0.0
-    duration_s: float = 0.0
-    jaw_target_start: float | None = None
-    jaw_target_end: float | None = None
-
-
-@dataclass(frozen=True)
-class _CompatRotate:
-    axis_camera: Vec3 = field(default_factory=lambda: Vec3(x=0.0, y=0.0, z=1.0))
-    angle_radians: float = 0.0
-    duration_s: float = 0.0
-    jaw_target_start: float | None = None
-    jaw_target_end: float | None = None
-
-
-@dataclass(frozen=True)
-class _CompatSweep:
-    axis_camera: Vec3 = field(default_factory=lambda: Vec3(x=0.0, y=0.0, z=1.0))
-    arc_radians: float = 0.0
-    duration_s: float = 0.0
-    jaw_target_start: float | None = None
-    jaw_target_end: float | None = None
-
-
-if not hasattr(_primitives, "Probe"):
-    _primitives.Probe = _CompatProbe
-if not hasattr(_primitives, "Retract"):
-    _primitives.Retract = _CompatRetract
-if not hasattr(_primitives, "Rotate"):
-    _primitives.Rotate = _CompatRotate
-if not hasattr(_primitives, "Sweep"):
-    _primitives.Sweep = _CompatSweep
-
-
-def _probe_retract_time(distance_m: float, peak_retract_speed_m_per_s: float = 0.0) -> float:
-    if float(peak_retract_speed_m_per_s) <= 0.0:
-        return 0.0
-    return float(distance_m) / float(peak_retract_speed_m_per_s)
-
-
-if not hasattr(_primitives, "_probe_retract_time"):
-    _primitives._probe_retract_time = _probe_retract_time
 
 
 from auto_surgery.motion.generator import _evaluate_reach, SurgicalMotionGenerator
@@ -132,19 +67,18 @@ def _step(*, sim_step_index: int, dt: float, tool_pose: Pose, tool_jaw: float = 
 
 
 def _motion_config() -> MotionGeneratorConfig:
-    return MotionGeneratorConfig(
-        seed=0,
-        motion_shaping=MotionShaping(
-            max_linear_m_s=0.2,
-            max_angular_rad_s=0.2,
-            max_linear_accel_m_s2=1.0,
-            max_angular_accel_rad_s2=1.0,
-            bias_gain_max=1.0,
-            bias_ramp_distance_m=1.0,
-            orientation_bias_gain=0.0,
-            orientation_deadband_rad=0.0,
-        ),
+    config = MotionGeneratorConfig(seed=0, motion_shaping_enabled=True)
+    config.__dict__["motion_shaping"] = MotionShaping(
+        max_linear_m_s=0.2,
+        max_angular_rad_s=0.2,
+        max_linear_accel_m_s2=1.0,
+        max_angular_accel_rad_s2=1.0,
+        bias_gain_max=1.0,
+        bias_ramp_distance_m=1.0,
+        orientation_bias_gain=0.0,
+        orientation_deadband_rad=0.0,
     )
+    return config
 
 
 class _BiasEnvelope:

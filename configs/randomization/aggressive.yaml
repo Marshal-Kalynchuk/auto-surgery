@@ -26,15 +26,19 @@ tissue_topology:
       - 1.5
 
 tissue_mesh:
+  # Brain volume, cortex surface, and skull must stay registered. Pin scale and
+  # bulge to identity so the tissue mesh is rendered in its canonical pose every
+  # episode; the skull MeshOBJLoader (static, hard-coded transform) then stays
+  # aligned with the FEM brain.
   scale_x:
-    low: 0.85
-    high: 1.15
+    low: 1.0
+    high: 1.0
   scale_y:
-    low: 0.85
-    high: 1.15
+    low: 1.0
+    high: 1.0
   scale_z:
-    low: 0.85
-    high: 1.15
+    low: 1.0
+    high: 1.0
   translation_scene:
     x:
       low: 0.0
@@ -45,7 +49,7 @@ tissue_mesh:
     z:
       low: 0.0
       high: 0.0
-  bulge_probability: 0.85
+  bulge_probability: 0.0
   bulge_offset_within_volume_frac:
     x:
       low: -1.0

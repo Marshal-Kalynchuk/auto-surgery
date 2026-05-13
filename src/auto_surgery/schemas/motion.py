@@ -45,6 +45,7 @@ class MotionGeneratorConfig(BaseModel):
 
     seed: int = 0
     motion_shaping_enabled: bool = False
+    motion_shaping: MotionShaping | None = None
 
     # Sequence shape.
     primitive_count_min: int = Field(default=8, ge=0)

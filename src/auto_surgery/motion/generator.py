@@ -18,7 +18,6 @@ from auto_surgery.motion.primitives import (
     _CONTACT_TOLERANCE_M,
     _SMALL_STANDOFF_M,
     _camera_basis,
-    _camera_tool_to_scene,
     _evaluate as _evaluate_primitive,
     _jaw_target,
     _pose_rotation_delta_vec,
@@ -300,12 +299,7 @@ def _evaluate_reach(active: object, last_step: StepResult) -> TwistSceneTip:
         )
 
     if isinstance(primitive, Reach):
-        camera_matrix, camera_position = _camera_basis(last_step)
-        start_pose_scene = _camera_tool_to_scene(
-            tool_pose=getattr(active, "started_at_pose_scene"),
-            camera_matrix=camera_matrix,
-            camera_position=camera_position,
-        )
+        start_pose_scene = getattr(active, "started_at_pose_scene")
         if duration_s <= 0.0:
             return TwistSceneTip(
                 Twist(
@@ -375,10 +369,14 @@ class SurgicalMotionGenerator:
         primitive: Primitive,
         in_contact: bool,
     ) -> tuple[list[float], bool]:
-        if not bool(getattr(self._motion_config, "motion_shaping_enabled", False)):
+        motion_shaping = getattr(self._motion_config, "motion_shaping", None)
+        motion_shaping_enabled = bool(
+            bool(getattr(self._motion_config, "motion_shaping_enabled", False))
+            or motion_shaping is not None
+        )
+        if not motion_shaping_enabled:
             return raw_angular, False
 
-        motion_shaping = getattr(self._motion_config, "motion_shaping", None)
         if motion_shaping is None:
             return raw_angular, False
 
@@ -435,7 +433,7 @@ class SurgicalMotionGenerator:
         e_rot = _axis_angle_between(forward_scene, d_desired)
         if _norm(e_rot) <= float(
             getattr(
-                self._motion_config.motion_shaping,
+                motion_shaping,
                 "orientation_deadband_rad",
                 float(getattr(tool_bias, "deadband_rad", 0.0)) if tool_bias is not None else 0.0,
             )
@@ -538,12 +536,7 @@ class SurgicalMotionGenerator:
             raise RuntimeError("reset() must be called before next_command()")
 
         active = self._fsm.step(last_step, self._last_jaw_commanded)
-        camera_matrix, camera_position = _camera_basis(last_step)
-        tip_pose_scene = _camera_tool_to_scene(
-            tool_pose=last_step.sensors.tool.pose,
-            camera_matrix=camera_matrix,
-            camera_position=camera_position,
-        )
+        tip_pose_scene = last_step.sensors.tool.pose
         primitive = getattr(active, "primitive")
 
         if isinstance(primitive, ContactReach):
@@ -562,9 +555,12 @@ class SurgicalMotionGenerator:
         elapsed_s = float(getattr(active, "elapsed_s", 0.0))
         tau = _time_to_fraction(elapsed_s, duration_s)
         jaw_target = _jaw_target(primitive=primitive, active=active, tau=tau)
-        motion_shaping_enabled = bool(getattr(self._motion_config, "motion_shaping_enabled", False))
+        motion_shaping = getattr(self._motion_config, "motion_shaping", None)
+        motion_shaping_enabled = bool(
+            bool(getattr(self._motion_config, "motion_shaping_enabled", False)) or motion_shaping is not None
+        )
         motion_shaping = (
-            getattr(self._motion_config, "motion_shaping", None)
+            motion_shaping
             if motion_shaping_enabled
             else None
         )

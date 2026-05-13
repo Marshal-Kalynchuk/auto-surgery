@@ -20,7 +20,7 @@ from auto_surgery.motion.primitives import (
     PrimitiveKind,
 )
 from auto_surgery.schemas.commands import Pose, Quaternion, Vec3
-from auto_surgery.schemas.scene import OrientationBias, WorkspaceEnvelope
+from auto_surgery.schemas.scene import OrientationBias, SphereEnvelope, WorkspaceEnvelope
 from auto_surgery.schemas.results import StepResult
 from auto_surgery.schemas.motion import MotionGeneratorConfig
 
@@ -36,7 +36,7 @@ class _InternalTargetVolume:
     shape: str = "sphere"
 
 
-@dataclass(frozen=True)
+@dataclass
 class Sequencer:
     """Sample primitives lazily and deterministically per episode.
 
@@ -121,35 +121,35 @@ class Sequencer:
         else:
             kind = self._sample_kind()
             match kind:
-                case PrimitiveKind.APPROACH:
+                case PrimitiveKind.REACH:
                     primitive = self._build_reach(last_step)
-                case PrimitiveKind.DWELL:
+                case PrimitiveKind.HOLD:
                     primitive = self._build_hold(last_step)
-                case PrimitiveKind.RETRACT:
+                case PrimitiveKind.DRAG:
                     primitive = self._build_drag()
-                case PrimitiveKind.SWEEP:
+                case PrimitiveKind.BRUSH:
                     primitive = self._build_brush(last_step)
-                case PrimitiveKind.ROTATE:
+                case PrimitiveKind.GRIP:
                     primitive = self._build_grip(last_step)
-                case PrimitiveKind.PROBE:
+                case PrimitiveKind.CONTACT_REACH:
                     if self._has_weight("contact_reach"):
                         primitive = self._build_contact_reach(last_step)
                     else:
-                        primitive = self._build_probe(last_step)
+                        primitive = self._build_contact_reach(last_step)
                 case _:
-                    primitive = self._build_dwell()
+                    primitive = self._build_hold()
 
         object.__setattr__(self, "_issued", self._issued + 1)
         return primitive
 
     def _sample_kind(self) -> PrimitiveKind:
         candidates = (
-            PrimitiveKind.APPROACH,
-            PrimitiveKind.DWELL,
-            PrimitiveKind.RETRACT,
-            PrimitiveKind.SWEEP,
-            PrimitiveKind.ROTATE,
-            PrimitiveKind.PROBE,
+            PrimitiveKind.REACH,
+            PrimitiveKind.HOLD,
+            PrimitiveKind.DRAG,
+            PrimitiveKind.BRUSH,
+            PrimitiveKind.GRIP,
+            PrimitiveKind.CONTACT_REACH,
         )
         weights = (
             self._sample_weight("reach", "approach"),
@@ -161,7 +161,7 @@ class Sequencer:
         )
         total = sum(max(0.0, weight) for weight in weights)
         if total <= 0.0:
-            return PrimitiveKind.APPROACH
+            return PrimitiveKind.REACH
 
         needle = float(self._rng_blend.uniform(0.0, total))
         cumulative = 0.0
@@ -207,6 +207,7 @@ class Sequencer:
             direction_hint_scene=None,
             max_search_m=0.1,
             peak_speed_m_per_s=0.05,
+            duration_s=self._sample_range(self.motion_config.approach_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
         )
@@ -223,6 +224,7 @@ class Sequencer:
             direction_hint_scene=_vector_to_vec3(_normalize(surface_axis)),
             max_search_m=0.1,
             peak_speed_m_per_s=0.05,
+            duration_s=self._sample_range(self.motion_config.approach_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=None,
         )
@@ -233,6 +235,7 @@ class Sequencer:
             lift_duration_s=0.5,
             release_after_s=0.5,
             jaw_close_duration_s=0.3,
+            duration_s=self._sample_range(self.motion_config.approach_duration_range_s) + 1.8,
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
         )
@@ -293,38 +296,6 @@ class Sequencer:
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
             end_on_contact=True,
-        )
-
-    def _build_approach(self, last_step: StepResult) -> Reach:
-        return self._build_reach(last_step)
-
-    def _build_dwell(self) -> Hold:
-        return self._build_hold()
-
-    def _build_retract(self) -> Drag:
-        return self._build_drag()
-
-    def _build_sweep(self) -> Brush:
-        if self._initial_step is None:
-            raise ValueError("initial_step is required for legacy sweep sampling")
-        return self._build_brush(self._initial_step)
-
-    def _build_rotate(self) -> Grip:
-        if self._initial_step is None:
-            raise ValueError("initial_step is required for legacy rotate sampling")
-        return self._build_grip(self._initial_step)
-
-    def _build_probe(self, last_step: StepResult) -> Reach:
-        start_pose_scene = self._tool_pose_scene(last_step)
-        target_pose = self._sample_target_pose(last_step, start_pose_scene)
-        approach_time = self._sample_range(self.motion_config.probe_duration_range_s)
-        jaw_start, jaw_end = self._sample_jaw_targets()
-        return Reach(
-            target_pose_scene=target_pose,
-            duration_s=approach_time,
-            jaw_target_start=jaw_start,
-            jaw_target_end=jaw_end,
-            end_on_contact=False,
         )
 
     def _sample_jaw_targets(self) -> tuple[float | None, float | None]:
@@ -419,7 +390,45 @@ class Sequencer:
             )
             if self._is_inside_inner_envelope(point):
                 return _safe_vector(point)
-        return _safe_vector(fallback_position)
+        return self._fallback_target_position_near_inner_envelope(fallback_position)
+
+    def _fallback_target_position_near_inner_envelope(self, fallback_position: np.ndarray) -> np.ndarray:
+        fallback = _safe_vector(fallback_position)
+        if self._workspace_envelope is None:
+            return fallback
+        inner_margin = float(getattr(self._workspace_envelope, "inner_margin_m", 0.0))
+        if inner_margin <= 0.0:
+            return fallback
+        try:
+            if self._is_inside_inner_envelope(fallback):
+                return fallback
+        except Exception:
+            return fallback
+
+        if isinstance(self._workspace_envelope, SphereEnvelope):
+            center = _safe_vector(_vec_to_array(self._workspace_envelope.center_scene))
+            direction = fallback - center
+            radius = float(self._workspace_envelope.radius_m)
+            if radius > 0.0:
+                return center + _normalize(direction) * (radius + inner_margin + 1.0e-6)
+
+        envelope_distance = getattr(self._workspace_envelope, "signed_distance_to_envelope", None)
+        if not callable(envelope_distance):
+            return fallback
+
+        for _ in range(64):
+            direction = _normalize(self._rng_targets.normal(size=3))
+            radius = 1.0
+            for _ in range(12):
+                candidate = fallback + direction * radius
+                try:
+                    distance = float(envelope_distance(_vector_to_vec3(candidate)))
+                except Exception:
+                    break
+                if distance >= inner_margin:
+                    return candidate
+                radius *= 2.0
+        return fallback
 
     def _is_inside_inner_envelope(self, point: np.ndarray) -> bool:
         envelope = self._workspace_envelope
@@ -510,15 +519,7 @@ class Sequencer:
         return float(self._rng.uniform(-magnitude, magnitude))
 
     def _tool_pose_scene(self, step: StepResult) -> Pose:
-        tool_pose = step.sensors.tool.pose
-        if not step.sensors.cameras:
-            return tool_pose
-
-        extrinsics = step.sensors.cameras[0].extrinsics
-        rot = _quat_to_matrix(extrinsics.rotation)
-        position = _apply_rotation(rot, _vec_to_array(tool_pose.position)) + _vec_to_array(extrinsics.position)
-        orientation = _matrix_to_quat(rot @ _quat_to_matrix(tool_pose.rotation))
-        return Pose(position=_vector_to_vec3(position), rotation=orientation)
+        return step.sensors.tool.pose
 
 
 # Compatibility alias for existing callers.

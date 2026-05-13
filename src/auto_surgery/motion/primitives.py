@@ -53,7 +53,7 @@ class Hold(_CommonTimedParams):
 
 
 @dataclass(frozen=True)
-class ContactReach(_CommonParams):
+class ContactReach(_CommonTimedParams):
     direction_hint_scene: Vec3 | None = None
     max_search_m: float = _DEFAULT_CONTACT_SEARCH_M
     peak_speed_m_per_s: float = _DEFAULT_CONTACT_SPEED_M_PER_S
@@ -66,6 +66,7 @@ class Grip:
     lift_duration_s: float = 0.5
     release_after_s: float = 0.5
     jaw_close_duration_s: float = 0.3
+    duration_s: float = 2.0
     jaw_target_start: float | None = None
     jaw_target_end: float | None = None
 
@@ -211,11 +212,7 @@ def _evaluate_reach(
     if duration_s <= 0.0:
         return _zero_twist()
 
-    start_pose_scene = _camera_tool_to_scene(
-        tool_pose=getattr(active, "started_at_pose_scene", primitive.target_pose_scene),
-        camera_matrix=camera_matrix,
-        camera_position=camera_position,
-    )
+    start_pose_scene = getattr(active, "started_at_pose_scene", primitive.target_pose_scene)
     delta_position = _vec_to_array(primitive.target_pose_scene.position) - _vec_to_array(start_pose_scene.position)
     delta_rotation = _pose_rotation_delta_vec(start_pose_scene, primitive.target_pose_scene)
     velocity = min_jerk_velocity_scalar(tau=tau, duration_s=duration_s)
@@ -243,11 +240,7 @@ def _evaluate_contact_reach(
             is_finished=True,
         )
 
-    tip_scene = _camera_tool_to_scene(
-        tool_pose=last_step.sensors.tool.pose,
-        camera_matrix=camera_matrix,
-        camera_position=camera_position,
-    )
+    tip_scene = last_step.sensors.tool.pose
     search_dir = _preferred_direction(primitive.direction_hint_scene, tip_scene)
     if np.linalg.norm(search_dir) <= _EPS:
         search_dir = np.array([0.0, 0.0, 1.0], dtype=float)
@@ -318,11 +311,7 @@ def _evaluate_grip(
     p4 = phase1 + phase2 + phase3
     p5 = phase1 + phase2 + phase3 + phase4
 
-    tip_scene = _camera_tool_to_scene(
-        tool_pose=last_step.sensors.tool.pose,
-        camera_matrix=camera_matrix,
-        camera_position=camera_position,
-    )
+    tip_scene = last_step.sensors.tool.pose
     normal = np.array([0.0, 0.0, 1.0], dtype=float)
     jaw_start = active.started_at_jaw if primitive.jaw_target_start is None else primitive.jaw_target_start
     jaw_end = jaw_start if primitive.jaw_target_end is None else primitive.jaw_target_end
@@ -417,11 +406,7 @@ def _evaluate_drag(
     if duration_s <= 0.0:
         return PrimitiveOutput(_zero_twist(), _jaw_target(primitive=primitive, active=active, tau=tau), True)
 
-    tip_scene = _camera_tool_to_scene(
-        tool_pose=last_step.sensors.tool.pose,
-        camera_matrix=camera_matrix,
-        camera_position=camera_position,
-    )
+    tip_scene = last_step.sensors.tool.pose
     direction = _preferred_direction(primitive.direction_hint_scene, tip_scene)
     normal = np.array([0.0, 0.0, 1.0], dtype=float)
     tangent = direction - normal * float(np.dot(direction, normal))
@@ -474,11 +459,7 @@ def _evaluate_brush(
     if duration_s <= 0.0:
         return PrimitiveOutput(_zero_twist(), _jaw_target(primitive=primitive, active=active, tau=tau), True)
 
-    tip_scene = _camera_tool_to_scene(
-        tool_pose=last_step.sensors.tool.pose,
-        camera_matrix=camera_matrix,
-        camera_position=camera_position,
-    )
+    tip_scene = last_step.sensors.tool.pose
     direction = _axis_unit(_preferred_direction(None, tip_scene))
     omega = 2.0 * math.pi * primitive.frequency_hz
     speed = abs(omega * primitive.amplitude_m * math.cos(omega * elapsed_s))
@@ -558,14 +539,6 @@ def _preferred_direction(direction_hint_scene: Vec3 | None, tip_pose: Pose) -> n
     if direction_hint_scene is not None:
         return _vec_to_array(direction_hint_scene)
     return _quat_to_matrix(tip_pose.rotation)[:, 2]
-
-
-def _camera_tool_to_scene(*, tool_pose: Pose, camera_matrix: np.ndarray, camera_position: np.ndarray) -> Pose:
-    pose_array = _vec_to_array(tool_pose.position)
-    rotation = _quat_to_matrix(tool_pose.rotation)
-    pos_scene = camera_matrix @ pose_array + camera_position
-    rot_scene = _matrix_to_quat(camera_matrix @ rotation)
-    return Pose(position=_vector_to_vec3(pos_scene), rotation=rot_scene)
 
 
 def _pose_rotation_delta_vec(start: Pose, target: Pose) -> np.ndarray:

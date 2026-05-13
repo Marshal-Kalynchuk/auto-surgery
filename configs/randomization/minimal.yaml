@@ -6,15 +6,18 @@ tissue_material:
     low: 0.43
     high: 0.47
 tissue_mesh:
+  # Brain volume, cortex surface, and skull must stay registered. Pin scale to
+  # 1.0 so the tissue mesh is rendered in its canonical pose every episode and
+  # stays aligned with the static skull MeshOBJLoader transform.
   scale_x:
-    low: 0.98
-    high: 1.02
+    low: 1.0
+    high: 1.0
   scale_y:
-    low: 0.98
-    high: 1.02
+    low: 1.0
+    high: 1.0
   scale_z:
-    low: 0.98
-    high: 1.02
+    low: 1.0
+    high: 1.0
   bulge_probability: 0.0
 camera:
   azimuth_deg:
