@@ -32,7 +32,8 @@
     <BackgroundSetting />
     <VisualStyle displayFlags="showVisual hideCollisionModels hideForceFields hideBehaviorModels"/>
     <OglSceneFrame/>
-    <InteractiveCamera position="0 30 90" lookAt="0 0 0"/>
+    <!-- Camera ported from DejaVu brain.scn.qglviewer.view (orbit pose) -->
+    <InteractiveCamera position="-56.838 -22.045 94.298" lookAt="0 0 0"/>
 
     <Node name="Brain">
         <EulerImplicitSolver />

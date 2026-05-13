@@ -1,0 +1,219 @@
+tissue_material:
+  young_modulus_pa:
+    low: 300.0
+    high: 20000.0
+  poisson_ratio:
+    low: 0.30
+    high: 0.49
+  total_mass_kg:
+    low: 0.2
+    high: 1.0
+  rayleigh_stiffness:
+    low: 0.02
+    high: 0.4
+
+tissue_topology:
+  sparse_grid_n:
+    options:
+      - [12, 12, 12]
+      - [16, 16, 16]
+      - [20, 20, 20]
+      - [24, 24, 24]
+    weights:
+      - 1.0
+      - 1.5
+      - 1.0
+      - 1.5
+
+tissue_mesh:
+  scale_x:
+    low: 0.85
+    high: 1.15
+  scale_y:
+    low: 0.85
+    high: 1.15
+  scale_z:
+    low: 0.85
+    high: 1.15
+  translation_scene:
+    x:
+      low: -10.0
+      high: 10.0
+    y:
+      low: -10.0
+      high: 10.0
+    z:
+      low: -10.0
+      high: 10.0
+  bulge_probability: 0.85
+  bulge_offset_within_volume_frac:
+    x:
+      low: -1.0
+      high: 1.0
+    y:
+      low: -1.0
+      high: 1.0
+    z:
+      low: -1.0
+      high: 1.0
+  bulge_radius_scene:
+    low: 1.0
+    high: 15.0
+  bulge_amplitude_scene:
+    low: -6.0
+    high: 8.0
+
+camera:
+  lookat_offset_within_volume_frac:
+    x:
+      low: -0.7
+      high: 0.7
+    y:
+      low: -0.7
+      high: 0.7
+    z:
+      low: -0.7
+      high: 0.7
+  # base_offset_scene intentionally omitted: the camera orbit base is taken
+  # from the POC pose in configs/scenes/dejavu_brain.yaml, then jittered by
+  # azimuth/elevation/roll/distance below.
+  distance_jitter_scale:
+    low: 0.65
+    high: 1.5
+  azimuth_deg:
+    low: -45.0
+    high: 45.0
+  elevation_deg:
+    low: -30.0
+    high: 30.0
+  roll_deg:
+    low: -20.0
+    high: 20.0
+  fx_jitter_pct:
+    low: -30.0
+    high: 30.0
+  fy_jitter_pct:
+    low: -30.0
+    high: 30.0
+  principal_point_offset_px:
+    x:
+      low: -40.0
+      high: 40.0
+    y:
+      low: -40.0
+      high: 40.0
+    z:
+      low: 0.0
+      high: 0.0
+  resolution_choices:
+    options:
+      - [640, 480]
+      - [720, 540]
+      - [800, 600]
+    weights:
+      - 1.0
+      - 1.0
+      - 1.0
+
+lighting:
+  directional_direction_scene:
+    x:
+      low: -0.8
+      high: 0.8
+    y:
+      low: -1.0
+      high: -0.1
+    z:
+      low: -0.8
+      high: 0.8
+  directional_intensity:
+    low: 0.3
+    high: 2.0
+  directional_color_rgb_tint:
+    x:
+      low: 0.75
+      high: 1.2
+    y:
+      low: 0.75
+      high: 1.2
+    z:
+      low: 0.75
+      high: 1.2
+  spot_position_scene:
+    x:
+      low: -80.0
+      high: 80.0
+    y:
+      low: 60.0
+      high: 240.0
+    z:
+      low: -80.0
+      high: 120.0
+  spot_direction_scene:
+    x:
+      low: -0.8
+      high: 0.8
+    y:
+      low: -1.0
+      high: -0.1
+    z:
+      low: -0.8
+      high: 0.8
+  spot_cone_half_angle_deg:
+    low: 15.0
+    high: 65.0
+  spot_intensity:
+    low: 0.3
+    high: 2.0
+  spot_color_rgb_tint:
+    x:
+      low: 0.7
+      high: 1.2
+    y:
+      low: 0.7
+      high: 1.2
+    z:
+      low: 0.7
+      high: 1.2
+  background_rgb:
+    x:
+      low: 0.0
+      high: 0.18
+    y:
+      low: 0.0
+      high: 0.18
+    z:
+      low: 0.0
+      high: 0.2
+
+visual_tint:
+  tissue_texture_tint_rgb:
+    x:
+      low: 0.7
+      high: 1.3
+    y:
+      low: 0.7
+      high: 1.3
+    z:
+      low: 0.7
+      high: 1.3
+  forceps_body_color_rgb:
+    x:
+      low: 0.6
+      high: 1.4
+    y:
+      low: 0.6
+      high: 1.4
+    z:
+      low: 0.6
+      high: 1.4
+  forceps_clasper_color_rgb:
+    x:
+      low: 0.6
+      high: 1.4
+    y:
+      low: 0.6
+      high: 1.4
+    z:
+      low: 0.6
+      high: 1.4

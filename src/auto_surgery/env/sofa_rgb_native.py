@@ -10,11 +10,17 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
+import math
+import io
 from pathlib import Path
 from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
 from PIL import Image
+
+from auto_surgery.schemas.commands import Pose
+from auto_surgery.schemas.sensors import CameraIntrinsics
 
 _OFFSCREEN_CAMERA_NAME = "auto_surgery_offscreen_camera"
 _FRAME_ROOT_DIR = Path(tempfile.gettempdir()) / "auto_surgery_sofa_offscreen_frames"
@@ -112,19 +118,191 @@ def _get_camera(root_node: Any) -> Any | None:
     return get_object(_OFFSCREEN_CAMERA_NAME)
 
 
+def _pose_position(pose: Pose) -> tuple[float, float, float]:
+    return (
+        float(pose.position.x),
+        float(pose.position.y),
+        float(pose.position.z),
+    )
+
+
+def _pose_look_at(
+    pose: Pose,
+    *,
+    look_distance: float = 1.0,
+) -> tuple[float, float, float]:
+    position = _pose_position(pose)
+    if look_distance <= 0.0:
+        return position
+
+    x = float(pose.rotation.x)
+    y = float(pose.rotation.y)
+    z = float(pose.rotation.z)
+    w = float(pose.rotation.w)
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if norm <= 0.0:
+        return (position[0], position[1], position[2] + look_distance)
+
+    x /= norm
+    y /= norm
+    z /= norm
+    w /= norm
+
+    # Approximate forward vector for local +Z in SOFA/OpenGL convention.
+    forward_x = 2.0 * (x * z + w * y)
+    forward_y = 2.0 * (y * z - w * x)
+    forward_z = 1.0 - 2.0 * (x * x + y * y)
+    forward_norm = math.sqrt(forward_x * forward_x + forward_y * forward_y + forward_z * forward_z)
+    if forward_norm <= 0.0:
+        return (position[0], position[1], position[2] + look_distance)
+
+    inv_forward = 1.0 / forward_norm
+    return (
+        position[0] + look_distance * forward_x * inv_forward,
+        position[1] + look_distance * forward_y * inv_forward,
+        position[2] + look_distance * forward_z * inv_forward,
+    )
+
+
+def _coerce_intrinsics_for_capture(camera_intrinsics: CameraIntrinsics | None) -> CameraIntrinsics:
+    if camera_intrinsics is None:
+        return CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=950, height=700)
+    width = int(camera_intrinsics.width)
+    height = int(camera_intrinsics.height)
+    return CameraIntrinsics(
+        fx=float(camera_intrinsics.fx),
+        fy=float(camera_intrinsics.fy),
+        cx=float(camera_intrinsics.cx),
+        cy=float(camera_intrinsics.cy),
+        width=max(1, width),
+        height=max(1, height),
+    )
+
+
+def _shift_principal_point(
+    rgb: np.ndarray,
+    *,
+    width: int,
+    height: int,
+    camera_intrinsics: CameraIntrinsics,
+    background_rgb: Sequence[float | int],
+) -> np.ndarray:
+    if width <= 0 or height <= 0:
+        return rgb
+    if camera_intrinsics.fx <= 1.0 or camera_intrinsics.fy <= 1.0:
+        return rgb
+
+    center_x = float(width) / 2.0
+    center_y = float(height) / 2.0
+    if (
+        math.isclose(camera_intrinsics.cx, center_x)
+        and math.isclose(camera_intrinsics.cy, center_y)
+    ):
+        return rgb
+    if camera_intrinsics.cx == 0.0 and camera_intrinsics.cy == 0.0:
+        # Older defaults in schema can represent "unset" principal point.
+        return rgb
+
+    shift_x = int(round(float(camera_intrinsics.cx) - center_x))
+    shift_y = int(round(float(camera_intrinsics.cy) - center_y))
+    if shift_x == 0 and shift_y == 0:
+        return rgb
+
+    output = np.zeros_like(rgb)
+    bg_channels = []
+    for index in range(3):
+        value = float(background_rgb[index] if index < len(background_rgb) else 0.0)
+        if value <= 1.0:
+            value *= 255.0
+        bg_channels.append(int(min(255.0, max(0.0, round(value)))))
+    output[:, :] = np.array((bg_channels[0], bg_channels[1], bg_channels[2]), dtype=np.uint8)
+
+    source_start_x = 0
+    source_start_y = 0
+    dest_start_x = shift_x
+    dest_start_y = shift_y
+    if shift_x < 0:
+        source_start_x = -shift_x
+        dest_start_x = 0
+    if shift_y < 0:
+        source_start_y = -shift_y
+        dest_start_y = 0
+    overlap_x = min(width - source_start_x, width - dest_start_x)
+    overlap_y = min(height - source_start_y, height - dest_start_y)
+    if overlap_x <= 0 or overlap_y <= 0:
+        return output
+    source_end_x = source_start_x + overlap_x
+    source_end_y = source_start_y + overlap_y
+    dest_end_x = dest_start_x + overlap_x
+    dest_end_y = dest_start_y + overlap_y
+    output[dest_start_y:dest_end_y, dest_start_x:dest_end_x] = rgb[
+        source_start_y:source_end_y, source_start_x:source_end_x
+    ]
+    return output
+
+
+def compensate_principal_point(
+    frame_bytes: bytes,
+    *,
+    width: int,
+    height: int,
+    camera_intrinsics: CameraIntrinsics | None,
+    background_rgb: Sequence[float | int] = (0, 0, 0),
+) -> bytes:
+    if camera_intrinsics is None:
+        return frame_bytes
+    try:
+        with io.BytesIO(frame_bytes) as input_buffer:
+            with Image.open(input_buffer) as image:
+                rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+    except Exception:
+        return frame_bytes
+    compensated = _shift_principal_point(
+        rgb,
+        width=width,
+        height=height,
+        camera_intrinsics=camera_intrinsics,
+        background_rgb=background_rgb,
+    )
+    if compensated is rgb:
+        return frame_bytes
+    with io.BytesIO() as output_buffer:
+        Image.fromarray(compensated).save(output_buffer, format="PNG")
+        return output_buffer.getvalue()
+
+
 def attach_capture_camera(
     root_node: Any,
     *,
-    width: int = 950,
-    height: int = 700,
-    # Keep camera parameters consistent with the scene's InteractiveCamera.
-    # brain_dejavu_forceps_poc.scn uses: position="0 30 90" lookAt="0 0 0".
-    position: tuple[float, float, float] = (0.0, 30.0, 90.0),
-    look_at: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    width: int | None = None,
+    height: int | None = None,
+    position: tuple[float, float, float] | None = None,
+    look_at: tuple[float, float, float] | None = None,
+    camera_pose: Pose | None = None,
+    camera_intrinsics: CameraIntrinsics | None = None,
 ) -> Any:
     """Attach the OffscreenCamera before Sofa.Simulation.init(root) runs."""
     _ensure_runtime_loaded()
-    if width <= 0 or height <= 0:
+    resolved_intrinsics = _coerce_intrinsics_for_capture(camera_intrinsics)
+    resolved_width = int(width) if width is not None else int(resolved_intrinsics.width)
+    resolved_height = int(height) if height is not None else int(resolved_intrinsics.height)
+    if resolved_width <= 0:
+        resolved_width = 950
+    if resolved_height <= 0:
+        resolved_height = 700
+    resolved_position = position
+    resolved_look_at = look_at
+    if camera_pose is not None:
+        pose_position = _pose_position(camera_pose)
+        if resolved_position is None:
+            resolved_position = pose_position
+        if resolved_look_at is None:
+            resolved_look_at = _pose_look_at(camera_pose)
+    if resolved_position is None:
+        resolved_position = (0.0, 30.0, 90.0)
+    if resolved_look_at is None:
+        resolved_look_at = (0.0, 0.0, 0.0)
+    if resolved_width <= 0 or resolved_height <= 0:
         raise ValueError("render width/height must be positive ints.")
 
     existing_camera = _get_camera(root_node)
@@ -142,10 +320,10 @@ def attach_capture_camera(
         camera = add_object(
             "OffscreenCamera",
             name=_OFFSCREEN_CAMERA_NAME,
-            widthViewport=width,
-            heightViewport=height,
-            position=list(position),
-            lookAt=list(look_at),
+            widthViewport=resolved_width,
+            heightViewport=resolved_height,
+            position=list(resolved_position),
+            lookAt=list(resolved_look_at),
             zNear=0.1,
             zFar=1000.0,
             fieldOfView=45.0,

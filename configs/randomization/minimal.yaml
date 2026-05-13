@@ -1,0 +1,46 @@
+tissue_material:
+  young_modulus_pa:
+    low: 2500.0
+    high: 3500.0
+  poisson_ratio:
+    low: 0.43
+    high: 0.47
+tissue_mesh:
+  scale_x:
+    low: 0.98
+    high: 1.02
+  scale_y:
+    low: 0.98
+    high: 1.02
+  scale_z:
+    low: 0.98
+    high: 1.02
+  bulge_probability: 0.0
+camera:
+  azimuth_deg:
+    low: -5.0
+    high: 5.0
+  elevation_deg:
+    low: -5.0
+    high: 5.0
+  fx_jitter_pct:
+    low: -2.0
+    high: 2.0
+  fy_jitter_pct:
+    low: -2.0
+    high: 2.0
+lighting:
+  directional_intensity:
+    low: 0.9
+    high: 1.1
+visual_tint:
+  tissue_texture_tint_rgb:
+    x:
+      low: 0.97
+      high: 1.03
+    y:
+      low: 0.97
+      high: 1.03
+    z:
+      low: 0.97
+      high: 1.03

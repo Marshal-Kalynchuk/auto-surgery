@@ -37,5 +37,18 @@ eval "$(conda shell.bash hook)"
 conda activate "${SOFA_ENV_NAME}"
 source "${REPO_ROOT}/.env.sofa"
 
-# Run the provided command
+# Make uv treat the active sofa-env conda environment as the project venv,
+# instead of building a parallel `.venv` under the repo (which would not have
+# SOFA's Python or the offscreen camera plugin available).
+#
+# - UV_PROJECT_ENVIRONMENT points uv at the conda env directory.
+# - UV_PYTHON pins the interpreter to the conda env's python so any tool that
+#   asks uv to discover a python (e.g. `uv pip install`) picks the right one.
+#
+# pyproject.toml sets `[tool.uv] managed = false`, so `uv run` does not try to
+# sync the env from a lockfile; deps are installed into sofa-env directly via
+# `pip install -e .` in `setup_sofa_conda.sh`.
+export UV_PROJECT_ENVIRONMENT="${CONDA_PREFIX}"
+export UV_PYTHON="${CONDA_PREFIX}/bin/python"
+
 exec "$@"

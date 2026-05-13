@@ -35,7 +35,7 @@ conda install -y \
   make \
   pkg-config
 
-pip install -e "${REPO_ROOT}"
+"${CONDA_PREFIX}/bin/python" -m pip install -e "${REPO_ROOT}"
 
 readonly PLUGIN_BUILD_ROOT="${PLUGIN_BUILD_ROOT:-$HOME/build}"
 readonly PLUGIN_SRC="${PLUGIN_BUILD_ROOT}/SofaOffscreenCamera"
@@ -104,6 +104,13 @@ export SOFA_PLUGIN_PATH="\$CONDA_PREFIX/plugins/SofaOffscreenCamera/lib\${SOFA_P
 export LD_LIBRARY_PATH="\$CONDA_PREFIX/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 export PATH="\$CONDA_PREFIX/bin\${PATH:+:\$PATH}"
 
+# Expose the SofaOffscreenCamera Python bindings (installed under the plugin's
+# own lib/<pyver>/site-packages by its CMake install) on sys.path. Without
+# this, \`import SofaOffscreenCamera\` fails even though the .so is present.
+_sofa_pyver="\$("\$CONDA_PREFIX/bin/python" -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
+export PYTHONPATH="\$CONDA_PREFIX/plugins/SofaOffscreenCamera/lib/\${_sofa_pyver}/site-packages\${PYTHONPATH:+:\$PYTHONPATH}"
+unset _sofa_pyver
+
 if [ -z "\${QT_QPA_PLATFORM:-}" ] && [ -z "\${DISPLAY:-}" ]; then
   export QT_QPA_PLATFORM=offscreen
 fi
@@ -111,13 +118,16 @@ fi
 export SOFA_GL_REQUIRED=1
 EOF
 
-cat <<'EOF'
+cat <<EOF
 
 SOFA Conda environment setup is complete.
 
 Next:
   conda activate ${SOFA_ENV_NAME}
   source .env.sofa
-  QT_QPA_PLATFORM=offscreen uv run python -c "from auto_surgery.env.sofa_rgb_native import validate_native_capture_runtime; validate_native_capture_runtime(); print('offscreen capture contract ok')"
+  QT_QPA_PLATFORM=offscreen python -c "from auto_surgery.env.sofa_rgb_native import validate_native_capture_runtime; validate_native_capture_runtime(); print('offscreen capture contract ok')"
+
+Or, to drive uv's project commands against the conda env:
+  bash infra/sofa/with-sofa.sh uv run auto-surgery --help
 
 EOF

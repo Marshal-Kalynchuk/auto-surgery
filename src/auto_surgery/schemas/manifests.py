@@ -1,7 +1,10 @@
 """Session, dataset, and checkpoint manifests (provenance + governance)."""
 
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
+
+from auto_surgery.schemas.scene import SceneConfig
 
 from pydantic import BaseModel, Field
 
@@ -30,31 +33,13 @@ SESSION_MANIFEST_SCHEMA_VERSION = "session_manifest_v1"
 DATASET_MANIFEST_SCHEMA_VERSION = "dataset_manifest_v1"
 CHECKPOINT_MANIFEST_SCHEMA_VERSION = "checkpoint_manifest_v1"
 RUN_METADATA_SCHEMA_VERSION = "run_metadata_v1"
+_DEFAULT_SCENE_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "scenes" / "dejavu_brain.yaml"
 
 
-class SceneConfig(BaseModel):
-    """Selects a SOFA scene + instrument pairing for native rollouts."""
+def _default_scene_config() -> SceneConfig:
+    from auto_surgery.config import load_scene_config
 
-    model_config = {"extra": "forbid"}
-
-    scene_id: str = "dejavu_brain"
-    tool_id: str = "forceps"
-    scene_xml_path: str | None = Field(
-        default=None,
-        description="Optional explicit `.scn` path; when set, overrides `scene_id` factory lookup.",
-    )
-    initial_jaw: float = Field(default=0.0, ge=0.0, le=1.0)
-
-
-class DomainRandomizationConfig(BaseModel):
-    """Opaque placeholder for piece-4 randomization knobs."""
-
-    model_config = {"extra": "forbid"}
-
-    spatial_variation: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Placeholder for spatial randomization hints (piece 4).",
-    )
+    return load_scene_config(_DEFAULT_SCENE_CONFIG_PATH)
 
 
 class EnvConfig(BaseModel):
@@ -64,11 +49,7 @@ class EnvConfig(BaseModel):
 
     scenario_id: str = "default"
     seed: int = 0
-    scene: SceneConfig = Field(default_factory=SceneConfig)
-    domain_randomization: DomainRandomizationConfig = Field(
-        default_factory=DomainRandomizationConfig,
-        description="Piece-1 placeholder; Passthrough to piece-4 randomization.",
-    )
+    scene: SceneConfig = Field(default_factory=_default_scene_config)
     control_rate_hz: float = Field(
         default=250.0,
         ge=1.0,
@@ -94,11 +75,15 @@ class RunMetadata(BaseModel):
     software_git_sha: str
     steps_requested: int
     fallback_to_stub: bool
+    run_id: str | None = None
     sofa_scene_path: str | None = None
     sofa_scene_id: str | None = None
     sofa_tool_id: str | None = None
     action_generator_config: dict[str, Any] = Field(default_factory=dict)
     capture_modalities: list[str] = Field(default_factory=list)
+    run_manifest_path: str | None = None
+    session_manifest_path: str | None = None
+    trace_artifact_paths: dict[str, str] = Field(default_factory=dict)
 
 
 class SessionManifest(BaseModel):
@@ -127,6 +112,10 @@ class SessionManifest(BaseModel):
     partition_checksums: dict[str, str] = Field(
         default_factory=dict,
         description="Relative path -> sha256.",
+    )
+    artifact_paths: dict[str, str] = Field(
+        default_factory=dict,
+        description="Session-local artifact paths keyed by purpose (e.g. forceps trace parquet).",
     )
     notes: str | None = None
 

@@ -1,0 +1,30 @@
+tissue_scene_path: src/auto_surgery/env/sofa_scenes/brain_dejavu_episodic.scn.template
+poc_scene_path: src/auto_surgery/env/sofa_scenes/brain_dejavu_forceps_poc.scn
+tool:
+  tool_id: dejavu_forceps
+  # Matches the canonical pose used by brain_dejavu_forceps_poc.scn (OglModel translation="0 -30 40")
+  initial_pose_scene:
+    position:
+      x: 0.0
+      y: -30.0
+      z: 40.0
+    rotation:
+      w: 1.0
+      x: 0.0
+      y: 0.0
+      z: 0.0
+  initial_jaw: 0.0
+camera_intrinsics:
+  fx: 925.0
+  fy: 925.0
+target_volumes:
+  - label: general
+    center_scene:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    half_extents_scene:
+      x: 45.81
+      y: 34.71
+      z: 30.73
+    shape: sphere

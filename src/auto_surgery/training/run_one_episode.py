@@ -8,6 +8,7 @@ import typer
 
 from auto_surgery.env.capture import default_captures
 from auto_surgery.schemas.manifests import SceneConfig
+from auto_surgery.schemas.scene import ToolSpec
 from auto_surgery.training.sofa_smoke import run_sofa_rollout_dataset
 
 app = typer.Typer(no_args_is_help=True)
@@ -26,7 +27,7 @@ def main(
     seed: int = typer.Option(7),
     rgb: bool = typer.Option(False, help="Persist native SOFA RGB blobs."),
     scene_id: str = typer.Option("dejavu_brain"),
-    tool_id: str = typer.Option("forceps"),
+    tool_id: str = typer.Option("dejavu_forceps"),
 ) -> None:
     """Materialize one dataset manifest + optional RGB blobs."""
 
@@ -37,14 +38,13 @@ def main(
     )
     scene_cfg = SceneConfig(
         scene_id=scene_id,
-        tool_id=tool_id,
-        scene_xml_path=sofa_scene_path,
+        tool=ToolSpec(tool_id=tool_id),
     )
     ds = run_sofa_rollout_dataset(
         storage_root_uri=storage_root_uri,
         case_id=case_id,
         session_id=session_id,
-        sofa_scene_path=None,
+        sofa_scene_path=sofa_scene_path,
         scene_config=scene_cfg,
         sofa_backend_factory=None,
         steps=steps,

@@ -12,7 +12,6 @@ from auto_surgery.schemas.logging import LoggedFrame, SafetyDecision
 from auto_surgery.schemas.manifests import (
     DataClassification,
     DatasetManifest,
-    DomainRandomizationConfig,
     EnvConfig,
     SceneConfig,
 )
@@ -36,13 +35,24 @@ from auto_surgery.training.sofa_smoke import run_sofa_smoke_pipeline
 class _SyntheticEpisodeEnvironment:
     """SOFA-free environment used by Stage-0 IDM tests."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        tool_wrench: Vec3 | None = None,
+        in_contact: bool = False,
+    ) -> None:
         self._jaw_target = 0.0
         self._last_accepted_cycle_id = -1
         self._frame_index = 0
         self._sim_time_s = 0.0
         self._control_rate_hz = 250.0
         self._frame_rate_hz = 30.0
+        self._tool_wrench = Vec3(
+            x=0.0 if tool_wrench is None else float(tool_wrench.x),
+            y=0.0 if tool_wrench is None else float(tool_wrench.y),
+            z=0.0 if tool_wrench is None else float(tool_wrench.z),
+        )
+        self._in_contact = bool(in_contact)
         self._scene = SceneGraph(slots=[])
         self._sensors = self._build_sensor_bundle(
             timestamp_ns=0,
@@ -57,7 +67,7 @@ class _SyntheticEpisodeEnvironment:
         )
 
     def reset(self, config: EnvConfig) -> StepResult:
-        self._jaw_target = float(config.scene.initial_jaw)
+        self._jaw_target = float(config.scene.tool.initial_jaw)
         self._last_accepted_cycle_id = -1
         self._frame_index = 0
         self._sim_time_s = 0.0
@@ -152,8 +162,8 @@ class _SyntheticEpisodeEnvironment:
                     angular=Vec3(x=0.0, y=0.0, z=0.0),
                 ),
                 jaw=self._jaw_target,
-                wrench=Vec3(x=0.0, y=0.0, z=0.0),
-                in_contact=False,
+                wrench=self._tool_wrench,
+                in_contact=self._in_contact,
             ),
             cameras=[
                 CameraView(
@@ -180,19 +190,31 @@ class _SyntheticEpisodeEnvironment:
 class _SyntheticRuntimeBackend:
     """Protocol-compatible SOFA backend used by smoke pipeline tests."""
 
-    def __init__(self, scene_path: str | None = None) -> None:
+    def __init__(
+        self,
+        scene_path: str | None = None,
+        *,
+        tool_wrench: Vec3 | None = None,
+        in_contact: bool = False,
+    ) -> None:
         del scene_path
         self._frame_index = 0
         self._jaw = 0.0
         self._control_rate_hz = 250.0
         self._frame_decimation = 1
         self._tool_pose = Pose(position=Vec3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+        self._tool_wrench = Vec3(
+            x=0.0 if tool_wrench is None else float(tool_wrench.x),
+            y=0.0 if tool_wrench is None else float(tool_wrench.y),
+            z=0.0 if tool_wrench is None else float(tool_wrench.z),
+        )
+        self._in_contact = bool(in_contact)
 
     def reset(self, config: EnvConfig) -> StepResult:
         self._frame_index = 0
         self._control_rate_hz = config.control_rate_hz
         self._frame_decimation = max(1, round(self._control_rate_hz / config.frame_rate_hz))
-        self._jaw = float(config.scene.initial_jaw)
+        self._jaw = float(config.scene.tool.initial_jaw)
         return StepResult(
             sensors=self._build_sensors(
                 sim_step_index=0,
@@ -264,8 +286,8 @@ class _SyntheticRuntimeBackend:
                 pose=self._tool_pose,
                 twist=Twist(linear=Vec3(x=0.0, y=0.0, z=0.0), angular=Vec3(x=0.0, y=0.0, z=0.0)),
                 jaw=self._jaw,
-                wrench=Vec3(x=0.0, y=0.0, z=0.0),
-                in_contact=False,
+                wrench=self._tool_wrench,
+                in_contact=self._in_contact,
             ),
             cameras=[
                 CameraView(
@@ -305,7 +327,6 @@ def test_idm_stage0_stub_pipeline(tmp_path: Path) -> None:
     sim.reset(
         EnvConfig(
             seed=3,
-            domain_randomization=DomainRandomizationConfig(spatial_variation={"lighting": "bright"}),
         )
     )
 
@@ -405,6 +426,53 @@ def test_idm_stage0_stub_pipeline(tmp_path: Path) -> None:
 
     mse = mse_sum / max(n, 1)
     assert mse < 1e-4
+
+
+def test_synthetic_episode_environment_emits_tool_contact_fields() -> None:
+    sim = _SyntheticEpisodeEnvironment(tool_wrench=Vec3(x=0.2, y=0.0, z=-0.5), in_contact=True)
+    sim.reset(EnvConfig(seed=5))
+    step = sim.step(
+        RobotCommand(
+            timestamp_ns=123,
+            cycle_id=1,
+            control_mode=ControlMode.CARTESIAN_TWIST,
+            cartesian_twist=Twist(
+                linear=Vec3(x=0.0, y=0.0, z=0.0),
+                angular=Vec3(x=0.0, y=0.0, z=0.0),
+            ),
+            enable=True,
+            source="test",
+        )
+    )
+    assert step.sensors.tool.wrench == Vec3(x=0.2, y=0.0, z=-0.5)
+    assert step.sensors.tool.in_contact is True
+
+
+def test_synthetic_runtime_backend_emits_tool_contact_fields() -> None:
+    backend = _SyntheticRuntimeBackend(
+        "test://scene",
+        tool_wrench=Vec3(x=-0.3, y=0.1, z=0.0),
+        in_contact=False,
+    )
+    reset = backend.reset(EnvConfig(seed=8))
+    assert reset.sensors.tool.wrench == Vec3(x=-0.3, y=0.1, z=0.0)
+    assert reset.sensors.tool.in_contact is False
+
+    step = backend.step(
+        RobotCommand(
+            timestamp_ns=300,
+            cycle_id=1,
+            control_mode=ControlMode.CARTESIAN_TWIST,
+            cartesian_twist=Twist(
+                linear=Vec3(x=0.0, y=0.0, z=0.0),
+                angular=Vec3(x=0.0, y=0.0, z=0.0),
+            ),
+            enable=True,
+            source="test",
+        )
+    )
+    assert step.sensors.tool.wrench == Vec3(x=-0.3, y=0.1, z=0.0)
+    assert step.sensors.tool.in_contact is False
 
 
 def test_sofa_smoke_pipeline(tmp_path: Path) -> None:

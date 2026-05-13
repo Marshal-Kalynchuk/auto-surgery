@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from pathlib import Path
 
-from auto_surgery.env.action_generators import (
-    ActionGenerator,
-    build_default_action_generator,
-    build_sine_twist_command,
-)
 from auto_surgery.env.capture import CaptureModality
-from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_brain_forceps_scene_path
 from auto_surgery.env.sofa import (
     SofaEnvironment,
     SofaRuntimeBackendFactory,
     SofaSceneFactory,
 )
 from auto_surgery.env.sofa_rgb_native import validate_native_capture_runtime
+from auto_surgery.config import load_motion_config, load_scene_config
 from auto_surgery.logging.storage import session_manifest_path
 from auto_surgery.logging.writer import SessionWriter
-from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.motion import SurgicalMotionGenerator
 from auto_surgery.schemas.logging import LoggedFrame
 from auto_surgery.schemas.manifests import (
     DataClassification,
@@ -29,23 +24,18 @@ from auto_surgery.schemas.manifests import (
     RetentionTier,
     RunMetadata,
     SceneConfig,
-    DomainRandomizationConfig,
 )
 from auto_surgery.training.datasets import frame_count_estimate
 from auto_surgery.training.extract_pseudo_actions import extract_pseudo_actions
 from auto_surgery.training.idm_train import train_idm
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_SCENE_CONFIG_PATH = (PROJECT_ROOT / "configs" / "scenes" / "dejavu_brain.yaml").resolve()
+DEFAULT_MOTION_CONFIG_PATH = (PROJECT_ROOT / "configs" / "motion" / "default.yaml").resolve()
 
-def build_lite_command(
-    step_index: int, *, base_ns: int = 1_000_000, amplitude: float = 0.05
-) -> RobotCommand:
-    """Generate a deterministic 1-joint command for smoke trajectories."""
-    return build_sine_twist_command(
-        step_index,
-        base_ns=base_ns,
-        linear_amplitude=amplitude,
-        phase_scale=0.1,
-    )
+
+def _resolve_sofa_scene_path(scene_config: SceneConfig) -> str:
+    return str(scene_config.tissue_scene_path.resolve())
 
 
 def run_sofa_rollout_dataset(
@@ -57,21 +47,26 @@ def run_sofa_rollout_dataset(
     steps: int = 64,
     segment_max_frames: int = 128,
     seed: int = 7,
-    domain_randomization: dict[str, Any] | None = None,
     sofa_backend_factory: SofaRuntimeBackendFactory | None = None,
     sofa_scene_factory: SofaSceneFactory | None = None,
     capture_rig_id: str = "sofa_rig",
-    action_generator: ActionGenerator | None = None,
-    action_generator_config: dict[str, Any] | None = None,
     capture_modalities: Sequence[CaptureModality] | None = None,
     scene_config: SceneConfig | None = None,
 ) -> DatasetManifest:
     """Run a bounded rollout and persist frames into a manifest-consumable dataset."""
-    gen = action_generator
-    if gen is None:
-        cfg = dict(action_generator_config or {})
-        cfg.setdefault("seed", seed)
-        gen = build_default_action_generator(cfg)
+    if scene_config is None:
+        scene_config = load_scene_config(DEFAULT_SCENE_CONFIG_PATH)
+    resolved_scene_path = None
+    if sofa_scene_path is None and sofa_scene_factory is None:
+        resolved_scene_path = _resolve_sofa_scene_path(scene_config)
+    else:
+        resolved_scene_path = sofa_scene_path
+    if sofa_scene_factory is not None and resolved_scene_path is not None:
+        sofa_scene_factory = None
+    # Prefer scene factories when supplied; avoid passing both path and factory to runtime init.
+
+    motion_config = load_motion_config(DEFAULT_MOTION_CONFIG_PATH).model_copy(update={"seed": seed})
+    gen = SurgicalMotionGenerator(motion_config, scene_config)
     modalities = list(capture_modalities or [])
     active_modalities = modalities
     sensor_names = [m.modality_id() for m in active_modalities]
@@ -84,32 +79,23 @@ def run_sofa_rollout_dataset(
         if active_modalities
         else []
     )
-    backend_factory = sofa_backend_factory
-    resolved_scene_path = (
-        resolve_brain_forceps_scene_path(sofa_scene_path)
-        if sofa_scene_path is not None
-        else None
-    )
-    env = SofaEnvironment(
-        sofa_scene_path=resolved_scene_path,
-        sofa_scene_factory=sofa_scene_factory,
-        scene_config=scene_config,
-        sofa_backend_factory=backend_factory,
-        pre_init_hooks=pre_init_hooks or None,
-    )
-    randomization_payload = (
-        domain_randomization or {}
-    )
-    env.reset(
+    env_kwargs: dict[str, object] = {
+        "scene_config": scene_config,
+        "sofa_backend_factory": sofa_backend_factory,
+        "pre_init_hooks": pre_init_hooks or None,
+    }
+    if resolved_scene_path is not None:
+        env_kwargs["sofa_scene_path"] = resolved_scene_path
+    if sofa_scene_factory is not None:
+        env_kwargs["sofa_scene_factory"] = sofa_scene_factory
+    env = SofaEnvironment(**env_kwargs)
+    last_step = env.reset(
         EnvConfig(
             seed=seed,
-            domain_randomization=(
-                randomization_payload
-                if isinstance(randomization_payload, DomainRandomizationConfig)
-                else DomainRandomizationConfig(spatial_variation=randomization_payload)
-            ),
+            scene=scene_config,
         )
     )
+    command = gen.reset(last_step)
     needs_native_rgb = any(
         cap.modality_id() == "rgb" for cap in active_modalities
     )
@@ -131,12 +117,11 @@ def run_sofa_rollout_dataset(
     )
 
     for i in range(steps):
-        cmd = gen.next_command(step_index=i, timestamp_ns=1_000_000 + i)
-        step = env.step(cmd)
+        step = env.step(command)
         if active_modalities:
             scene_root = env.sofa_scene_root
             for cap in active_modalities:
-                payload = cap.capture(root_node=scene_root, step_index=i)
+                payload = cap.capture(root_node=scene_root, step_index=step.sim_step_index)
                 if payload.get("implemented") is False:
                     continue
                 raw = payload.get("bytes")
@@ -144,28 +129,28 @@ def run_sofa_rollout_dataset(
                     writer.write_blob(f"{cap.modality_id()}/{i:06d}.png", raw)
         lf = LoggedFrame(
             frame_index=i,
-            timestamp_ns=cmd.timestamp_ns,
+            timestamp_ns=step.sensors.timestamp_ns,
             sensor_payload=step.sensors,
             scene_snapshot=env.get_scene(),
-            commanded_action=cmd,
-            executed_action=cmd,
+            commanded_action=command,
+            executed_action=command,
             safety_decision=None,
             entity_state=None,
             surgeon_input=None,
             outcome_label=None,
         )
         writer.write_frame(lf)
+        command = gen.next_command(step)
+        last_step = step
+    gen.finalize(last_step)
 
-    ag_cfg = dict(action_generator_config or {})
-    ag_cfg.setdefault("seed", seed)
     run_meta = RunMetadata(
         software_git_sha="stage0",
         steps_requested=steps,
         fallback_to_stub=False,
-        sofa_scene_path=sofa_scene_path,
+        sofa_scene_path=resolved_scene_path,
         sofa_scene_id=scene_config.scene_id if scene_config else None,
-        sofa_tool_id=scene_config.tool_id if scene_config else None,
-        action_generator_config=ag_cfg,
+        sofa_tool_id=(scene_config.tool.tool_id if scene_config else None),
         capture_modalities=[m.modality_id() for m in active_modalities],
     )
     writer.finalize(run_metadata=run_meta)

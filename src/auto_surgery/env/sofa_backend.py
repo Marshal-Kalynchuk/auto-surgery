@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from collections.abc import Callable
 import io
-from typing import Any, Protocol
+import re
+from typing import Any, Protocol, Sequence
+from pathlib import Path
 
 from auto_surgery.schemas.commands import Pose, Quaternion, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.manifests import EnvConfig
 from auto_surgery.schemas.results import StepResult
-from auto_surgery.schemas.scene import SceneGraph
+from auto_surgery.schemas.scene import SceneConfig, SceneGraph
 from auto_surgery.schemas.sensors import (
     CameraIntrinsics,
     CameraView,
@@ -19,11 +22,21 @@ from auto_surgery.schemas.sensors import (
     ToolState,
     JointState,
 )
+from auto_surgery.env.sofa_tools import build_forceps_observer
 from auto_surgery.env.sofa_discovery import (
     _module_candidates_for_runtime,
     resolve_sofa_runtime_import_candidates,
 )
-from auto_surgery.env.sofa_rgb_native import render_frame_to_rgb
+from auto_surgery.env.sofa_rgb_native import compensate_principal_point, render_frame_to_rgb
+from auto_surgery.env.sofa_scenes.dejavu_paths import (
+    DEJAVU_ROOT_PLACEHOLDER,
+    resolve_dejavu_root,
+    render_dejavu_scene_template,
+)
+from auto_surgery.randomization.scn_template import render_scene_template
+
+_AUTO_SCENE_PREFIX = "auto-surgery-brain-dejavu-"
+_AUTO_WARP_PREFIX = "auto-surgery-tissue-warp-"
 
 
 class SofaRuntimeContractError(RuntimeError):
@@ -86,6 +99,22 @@ def _call_runtime_callable(fn: Callable[..., Any], *args: Any) -> Any:
                 return fn()
             except TypeError:
                 raise
+
+
+def _resolve_tool_state_observer(
+    *,
+    extra: dict[str, Any] | None,
+    jaw_ref: dict[str, float],
+) -> Callable[[Any], ToolState] | None:
+    if not isinstance(extra, dict):
+        return None
+    tool_id = str(extra.get("tool_id", "")).strip().lower()
+    if tool_id not in {"forceps", "dejavu_forceps"}:
+        return None
+    provided = extra.get("tool_state_observer")
+    if provided is not None and callable(provided):
+        return provided
+    return build_forceps_observer(dof=None, jaw_ref=jaw_ref)
 
 
 _OFFSCREEN_CAMERA_NAME = "auto_surgery_offscreen_camera"
@@ -152,6 +181,8 @@ class _NativeSofaBackend:
         step_dt: float = 0.01,
         action_applier: Callable[[Any, RobotCommand], None] | None = None,
         pre_init_hooks: list[Callable[[Any, EnvConfig], None]] | None = None,
+        tool_state_observer: Callable[[Any], ToolState] | None = None,
+        tool_state_jaw_ref: dict[str, float] | None = None,
     ) -> None:
         self._module = module
         self._module_name = module_name
@@ -162,41 +193,25 @@ class _NativeSofaBackend:
         self._pre_init_hooks = tuple(pre_init_hooks or ())
         self._frame_index = 0
         self._jaw_target = 0.0
+        self._tool_state_jaw_ref = tool_state_jaw_ref or {"jaw": 0.0}
+        self._tool_state_jaw_ref["jaw"] = self._jaw_target
+        self._tool_state_observer = tool_state_observer
         self._capture_camera: Any | None = None
         self._capture_enabled = False
         self._scene_handle: Any | None = None
+        self._rendered_scene_paths: set[Path] = set()
+        self._scene_camera_extrinsics = self._default_camera_extrinsics()
+        self._scene_camera_intrinsics = self._default_camera_intrinsics()
+        self._scene_background_rgb = (0.0, 0.0, 0.0)
         self._latest_scene = SceneGraph(
             frame_index=0, events=[{"phase": "created", "backend": module_name}]
         )
+        default_tool_state = self._default_tool_state()
         self._latest_sensors = SensorBundle(
             timestamp_ns=0,
             sim_time_s=0.0,
-            tool=ToolState(
-                pose=Pose(
-                    position=Vec3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                ),
-                twist=Twist(
-                    linear=Vec3(x=0.0, y=0.0, z=0.0),
-                    angular=Vec3(x=0.0, y=0.0, z=0.0),
-                ),
-                jaw=0.0,
-                wrench=Vec3(x=0.0, y=0.0, z=0.0),
-                in_contact=False,
-            ),
-            cameras=[
-                CameraView(
-                    camera_id="sofa_default",
-                    timestamp_ns=0,
-                    extrinsics=Pose(
-                        position=Vec3(x=0.0, y=0.0, z=0.0),
-                        rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                    ),
-                    intrinsics=CameraIntrinsics(
-                        fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=1, height=1
-                    ),
-                )
-            ],
+            tool=default_tool_state,
+            cameras=self._camera_default_view(timestamp_ns=0, frame_rgb=None),
             safety=SafetyStatus(
                 motion_enabled=False,
                 command_blocked=False,
@@ -207,6 +222,113 @@ class _NativeSofaBackend:
         self._loader, self._stepper, self._resetter, self._snapshotter, self._sensor_reader = (
             self._resolve_runtime_functions(module)
         )
+
+    @staticmethod
+    def _default_camera_extrinsics() -> Pose:
+        return Pose(
+            position=Vec3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+        )
+
+    @staticmethod
+    def _default_camera_intrinsics() -> CameraIntrinsics:
+        return CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=1, height=1)
+
+    @staticmethod
+    def _scene_camera_path_from_config(config: EnvConfig) -> str | None:
+        tissue_scene_path = getattr(config.scene, "tissue_scene_path", None)
+        if tissue_scene_path is None:
+            return None
+        return str(tissue_scene_path.resolve())
+
+    @staticmethod
+    def _coerce_background_rgb(rgb: Sequence[float] | tuple[float, float, float]) -> tuple[float, float, float]:
+        values = list(rgb or (0.0, 0.0, 0.0))
+        if len(values) < 3:
+            values = values + [0.0] * (3 - len(values))
+        return (float(values[0]), float(values[1]), float(values[2]))
+
+    @staticmethod
+    def _scene_template_candidate(raw_xml: str, candidate: Path) -> bool:
+        has_placeholders = "{{" in raw_xml and "}}" in raw_xml
+        return candidate.suffix == ".template" or has_placeholders
+
+    @staticmethod
+    def _is_owned_temporary_path(path: Path) -> bool:
+        name = path.name
+        return name.startswith(_AUTO_SCENE_PREFIX) or name.startswith(_AUTO_WARP_PREFIX)
+
+    def _register_rendered_path(self, path: Path) -> None:
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            resolved = path.expanduser()
+        self._rendered_scene_paths.add(resolved)
+
+    def _scene_temporary_artifacts(self, rendered_scene_path: Path) -> set[Path]:
+        try:
+            scene_text = rendered_scene_path.read_text(encoding="utf-8")
+        except OSError:
+            return set()
+
+        mesh_paths: set[Path] = set()
+        scene_parent = rendered_scene_path.parent
+        for match in re.finditer(r'filename="([^"]+)"', scene_text):
+            raw_path = match.group(1).strip()
+            if not raw_path:
+                continue
+            mesh_path = Path(raw_path).expanduser()
+            if not mesh_path.is_absolute():
+                mesh_path = (scene_parent / mesh_path).resolve()
+            if (
+                mesh_path.suffix.lower() == ".obj"
+                and self._is_owned_temporary_path(mesh_path)
+                and mesh_path.exists()
+            ):
+                mesh_paths.add(mesh_path)
+        return mesh_paths
+
+    @staticmethod
+    def _coerce_intrinsics(cfg: CameraIntrinsics) -> CameraIntrinsics:
+        if cfg.fx <= 1.0 and cfg.fy <= 1.0 and cfg.cx == 0.0 and cfg.cy == 0.0:
+            return CameraIntrinsics(
+                fx=1.0,
+                fy=1.0,
+                cx=0.0,
+                cy=0.0,
+                width=_as_int(cfg.width, 1),
+                height=_as_int(cfg.height, 1),
+            )
+        return cfg
+
+    def _default_tool_state(self) -> ToolState:
+        return ToolState(
+            pose=Pose(
+                position=Vec3(x=0.0, y=0.0, z=0.0),
+                rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+            ),
+            twist=Twist(
+                linear=Vec3(x=0.0, y=0.0, z=0.0),
+                angular=Vec3(x=0.0, y=0.0, z=0.0),
+            ),
+            jaw=float(self._tool_state_jaw_ref.get("jaw", 0.0)),
+            wrench=Vec3(x=0.0, y=0.0, z=0.0),
+            in_contact=False,
+        )
+
+    def _observed_tool_state(self) -> ToolState:
+        if self._tool_state_observer is None:
+            return self._default_tool_state()
+        try:
+            tool = self._tool_state_observer(self._scene_handle)
+        except Exception:
+            return self._default_tool_state()
+        if isinstance(tool, ToolState):
+            return tool
+        return self._default_tool_state()
+
+    def _sync_tool_jaw(self, jaw: float) -> None:
+        self._tool_state_jaw_ref["jaw"] = float(jaw)
 
     @classmethod
     def _resolve_runtime_functions(
@@ -233,9 +355,55 @@ class _NativeSofaBackend:
         sensor_reader = _first_callable(candidate_objects, cls._SENSOR_NAMES)
         return loader, stepper, resetter, snapshotter, sensor_reader
 
+    def _cleanup_rendered_scene_paths(self) -> None:
+        for path in tuple(self._rendered_scene_paths):
+            with suppress(OSError):
+                path.unlink()
+            self._rendered_scene_paths.discard(path)
+
+    def _resolve_scene_path_for_runtime(self, configured_path: str, scene: SceneConfig) -> str:
+        candidate = Path(configured_path).expanduser()
+        raw_xml: str
+        try:
+            raw_xml = candidate.read_text(encoding="utf-8")
+        except (OSError, TypeError):
+            return str(candidate)
+        if self._scene_template_candidate(raw_xml, candidate):
+            return str(
+                render_scene_template(
+                    scene,
+                    dejavu_root=resolve_dejavu_root(),
+                    template_path=candidate,
+                )
+            )
+        if DEJAVU_ROOT_PLACEHOLDER not in raw_xml:
+            return str(candidate)
+        return render_dejavu_scene_template(candidate)
+
+    def _resolve_scene_path(self, config: EnvConfig) -> str | None:
+        requested = self._scene_camera_path_from_config(config)
+        if requested is None:
+            return self._scene_path
+        requested_path = Path(requested).expanduser()
+        if requested_path.exists():
+            resolved = self._resolve_scene_path_for_runtime(requested, config.scene)
+        else:
+            resolved = str(requested_path)
+        if resolved != requested:
+            resolved_path = Path(resolved)
+            if self._is_owned_temporary_path(resolved_path):
+                self._register_rendered_path(resolved_path)
+                self._rendered_scene_paths.update(self._scene_temporary_artifacts(resolved_path))
+            else:
+                self._register_rendered_path(resolved_path)
+        elif self._is_owned_temporary_path(requested_path):
+            self._register_rendered_path(requested_path)
+            self._rendered_scene_paths.update(self._scene_temporary_artifacts(requested_path))
+        return resolved
+
     def reset(self, config: EnvConfig) -> StepResult:
         self.set_control_rate_hz(config.control_rate_hz)
-        self.set_initial_jaw(float(config.scene.initial_jaw))
+        self.set_initial_jaw(float(config.scene.tool.initial_jaw))
         if self._scene_factory is None and self._loader is None:
             raise SofaRuntimeContractError(
                 "SOFA runtime loaded but no scene loader found. "
@@ -247,6 +415,10 @@ class _NativeSofaBackend:
                 f"Expected one of {self._RESET_NAMES}."
             )
         self._frame_index = 0
+        self._cleanup_rendered_scene_paths()
+        self._scene_camera_extrinsics = config.scene.camera_extrinsics_scene
+        self._scene_camera_intrinsics = self._coerce_intrinsics(config.scene.camera_intrinsics)
+        self._scene_background_rgb = self._coerce_background_rgb(config.scene.lighting.background_rgb)
         if self._scene_factory is not None:
             # Build the scene graph in-process via the provided Python factory.
             core = getattr(self._module, "Core", None)
@@ -259,9 +431,11 @@ class _NativeSofaBackend:
             self._scene_handle = node_ctor("root")
             _call_runtime_callable(self._scene_factory, self._scene_handle, config)
         else:
-            if self._loader is None or self._scene_path is None:
+            scene_path = self._resolve_scene_path(config)
+            if self._loader is None or scene_path is None:
                 raise SofaRuntimeContractError("Scene loading requires scene_path.")
-            self._scene_handle = _call_runtime_callable(self._loader, self._scene_path)
+            self._scene_path = scene_path
+            self._scene_handle = _call_runtime_callable(self._loader, scene_path)
 
         for hook in self._pre_init_hooks:
             hook(self._scene_handle, config)
@@ -283,12 +457,14 @@ class _NativeSofaBackend:
 
     def set_initial_jaw(self, jaw: float) -> None:
         self._jaw_target = float(jaw)
+        self._sync_tool_jaw(self._jaw_target)
         self._latest_sensors = self._latest_sensors.model_copy(
             update={"tool": self._latest_sensors.tool.model_copy(update={"jaw": self._jaw_target})}
         )
 
     def set_tool_jaw_target(self, jaw: float) -> None:
         self._jaw_target = float(jaw)
+        self._sync_tool_jaw(self._jaw_target)
 
     def _resolve_capture_camera(self) -> Any | None:
         if self._scene_handle is None:
@@ -331,6 +507,14 @@ class _NativeSofaBackend:
         if frame_rgb is None:
             self._capture_enabled = False
             return None
+        if self._scene_camera_intrinsics is not None:
+            frame_rgb = compensate_principal_point(
+                frame_rgb,
+                width=width,
+                height=height,
+                camera_intrinsics=self._scene_camera_intrinsics,
+                background_rgb=self._scene_background_rgb,
+            )
         return frame_rgb
 
     def step(self, action: RobotCommand) -> StepResult:
@@ -369,39 +553,34 @@ class _NativeSofaBackend:
     def get_contacts(self) -> list[Contact]:
         return []
 
+    def close(self) -> None:
+        self._cleanup_rendered_scene_paths()
+
+    def _camera_default_view(
+        self,
+        *,
+        timestamp_ns: int,
+        frame_rgb: bytes | None,
+    ) -> list[CameraView]:
+        return [
+            CameraView(
+                camera_id="sofa_default",
+                timestamp_ns=timestamp_ns,
+                extrinsics=self._scene_camera_extrinsics,
+                intrinsics=self._scene_camera_intrinsics,
+                frame_rgb=frame_rgb,
+            )
+        ]
+
     def _extract_sensors(self) -> SensorBundle:
         if self._sensor_reader is None:
             frame_rgb = self._capture_camera_frame()
+            tool = self._observed_tool_state()
             return SensorBundle(
                 timestamp_ns=0,
                 sim_time_s=self._frame_index * self._step_dt,
-                tool=ToolState(
-                    pose=Pose(
-                        position=Vec3(x=0.0, y=0.0, z=0.0),
-                        rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                    ),
-                    twist=Twist(
-                        linear=Vec3(x=0.0, y=0.0, z=0.0),
-                        angular=Vec3(x=0.0, y=0.0, z=0.0),
-                    ),
-                    jaw=self._jaw_target,
-                    wrench=Vec3(x=0.0, y=0.0, z=0.0),
-                    in_contact=False,
-                ),
-                cameras=[
-                    CameraView(
-                        camera_id="sofa_default",
-                        timestamp_ns=0,
-                        extrinsics=Pose(
-                            position=Vec3(x=0.0, y=0.0, z=0.0),
-                            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                        ),
-                        intrinsics=CameraIntrinsics(
-                            fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=1, height=1
-                        ),
-                        frame_rgb=frame_rgb,
-                    )
-                ],
+                tool=tool,
+                cameras=self._camera_default_view(timestamp_ns=0, frame_rgb=frame_rgb),
                 safety=SafetyStatus(
                     motion_enabled=False,
                     command_blocked=False,
@@ -419,19 +598,7 @@ class _NativeSofaBackend:
             if isinstance(raw_tool, dict):
                 tool = ToolState.model_validate(raw_tool)
             else:
-                tool = ToolState(
-                    pose=Pose(
-                        position=Vec3(x=0.0, y=0.0, z=0.0),
-                        rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                    ),
-                    twist=Twist(
-                        linear=Vec3(x=0.0, y=0.0, z=0.0),
-                        angular=Vec3(x=0.0, y=0.0, z=0.0),
-                    ),
-                    jaw=self._jaw_target,
-                    wrench=Vec3(x=0.0, y=0.0, z=0.0),
-                    in_contact=False,
-                )
+                tool = self._observed_tool_state()
 
             raw_cameras = payload.get("cameras", [])
             if isinstance(raw_cameras, list) and raw_cameras:
@@ -441,35 +608,12 @@ class _NativeSofaBackend:
                         parsed_cameras.append(item)
                     elif isinstance(item, dict):
                         parsed_cameras.append(CameraView.model_validate(item))
-                cameras = parsed_cameras if parsed_cameras else [
-                    CameraView(
-                        camera_id="sofa_default",
-                        timestamp_ns=timestamp,
-                        extrinsics=Pose(
-                            position=Vec3(x=0.0, y=0.0, z=0.0),
-                            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                        ),
-                        intrinsics=CameraIntrinsics(
-                            fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=1, height=1
-                        ),
-                        frame_rgb=None,
-                    )
-                ]
+                cameras = parsed_cameras if parsed_cameras else self._camera_default_view(
+                    timestamp_ns=timestamp,
+                    frame_rgb=None,
+                )
             else:
-                cameras = [
-                    CameraView(
-                        camera_id="sofa_default",
-                        timestamp_ns=timestamp,
-                        extrinsics=Pose(
-                            position=Vec3(x=0.0, y=0.0, z=0.0),
-                            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                        ),
-                        intrinsics=CameraIntrinsics(
-                            fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=1, height=1
-                        ),
-                        frame_rgb=None,
-                    )
-                ]
+                cameras = self._camera_default_view(timestamp_ns=timestamp, frame_rgb=None)
             raw_safety = payload.get("safety")
             if isinstance(raw_safety, dict):
                 safety = SafetyStatus.model_validate(raw_safety)
@@ -491,33 +635,8 @@ class _NativeSofaBackend:
         return SensorBundle(
             timestamp_ns=0,
             sim_time_s=self._frame_index * self._step_dt,
-            tool=ToolState(
-                pose=Pose(
-                    position=Vec3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                ),
-                twist=Twist(
-                    linear=Vec3(x=0.0, y=0.0, z=0.0),
-                    angular=Vec3(x=0.0, y=0.0, z=0.0),
-                ),
-                jaw=self._jaw_target,
-                wrench=Vec3(x=0.0, y=0.0, z=0.0),
-                in_contact=False,
-            ),
-            cameras=[
-                CameraView(
-                    camera_id="sofa_default",
-                    timestamp_ns=0,
-                    extrinsics=Pose(
-                        position=Vec3(x=0.0, y=0.0, z=0.0),
-                        rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
-                    ),
-                    intrinsics=CameraIntrinsics(
-                        fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=1, height=1
-                    ),
-                    frame_rgb=frame_rgb,
-                )
-            ],
+            tool=self._observed_tool_state(),
+            cameras=self._camera_default_view(timestamp_ns=0, frame_rgb=frame_rgb),
             safety=SafetyStatus(
                 motion_enabled=False,
                 command_blocked=False,
@@ -550,12 +669,9 @@ def build_sofa_runtime_backend(
     candidates: tuple[str, ...] | None = None,
     extra: dict[str, Any] | None = None,
     pre_init_hooks: list[Callable[[Any, EnvConfig], None]] | None = None,
+    tool_state_jaw_ref: dict[str, float] | None = None,
 ) -> SofaRuntimeBackend:
     """Instantiate a runtime backend from discovered SOFA module."""
-
-    # extra is accepted to preserve explicit factory hooks and to centralize
-    # extension points for future backend adapters.
-    del extra
 
     module_name, module = resolve_sofa_runtime_import_candidates(candidates=candidates)
     if module is None:
@@ -582,6 +698,12 @@ def build_sofa_runtime_backend(
             f"Sofa runtime appears incomplete: missing Sofa.Core.Node. Hint: {sofa_import_hint}"
         )
 
+    tool_state_jaw_ref = tool_state_jaw_ref or {"jaw": 0.0}
+    tool_state_observer = _resolve_tool_state_observer(
+        extra=extra,
+        jaw_ref=tool_state_jaw_ref,
+    )
+
     return _NativeSofaBackend(
         module_name,
         module,
@@ -590,5 +712,7 @@ def build_sofa_runtime_backend(
         step_dt=step_dt,
         action_applier=action_applier,
         pre_init_hooks=pre_init_hooks,
+        tool_state_observer=tool_state_observer,
+        tool_state_jaw_ref=tool_state_jaw_ref,
     )
 

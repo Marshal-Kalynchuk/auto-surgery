@@ -24,6 +24,9 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check src tests
 
+      - name: Verify forceps collision mesh contract
+        run: uv run python scripts/prep_forceps_collision_meshes.py --verify-committed
+
       - name: Pyright
         run: uv run pyright
 
@@ -59,3 +62,10 @@ jobs:
           validate_native_capture_runtime()
           print("offscreen capture contract ok")
           PY
+
+      - name: Run SOFA-dependent smoke tests
+        shell: bash -l {0}
+        run: |
+          bash infra/sofa/with-sofa.sh python -m pytest -q \
+            tests/integration/test_sofa_dr_smoke.py \
+            tests/integration/test_forceps_brain_contact_integration.py

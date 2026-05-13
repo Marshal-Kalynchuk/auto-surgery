@@ -50,7 +50,16 @@ class SofaNativeRgbCapture:
 
     def pre_init_hook(self, root_node: Any, config: EnvConfig) -> None:
         """Attach the OffscreenCamera before Sofa.Simulation.init(root) runs."""
-        attach_capture_camera(root_node, width=self._width, height=self._height)
+        scene = config.scene
+        intrinsics = scene.camera_intrinsics
+        pose = scene.camera_extrinsics_scene
+        attach_capture_camera(
+            root_node,
+            width=self._width if self._width else intrinsics.width,
+            height=self._height if self._height else intrinsics.height,
+            camera_pose=pose,
+            camera_intrinsics=intrinsics,
+        )
 
 
 class StereoRgbStubCapture:

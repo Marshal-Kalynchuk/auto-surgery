@@ -1,0 +1,51 @@
+## Motion generator knobs (tuning surface)
+## - seed: RNG seed for deterministic primitive sampling.
+## - primitive_count_min/max: number of primitives per episode.
+## - weight_*: relative probability of selecting each primitive.
+## - *_duration_range_s / *_angle_range_rad / *_distance_range_m:
+##     per-primitive parameter ranges (SI units: metres, seconds, radians).
+## - target_orientation_jitter_rad: orientation noise applied to Approach/Probe.
+seed: 0
+primitive_count_min: 8
+primitive_count_max: 20
+weight_approach: 1.0
+weight_dwell: 0.5
+weight_retract: 0.7
+weight_sweep: 0.9
+weight_rotate: 0.9
+weight_probe: 0.8
+approach_duration_range_s:
+  - 0.6
+  - 1.5
+dwell_duration_range_s:
+  - 0.3
+  - 0.8
+retract_duration_range_s:
+  - 0.4
+  - 0.9
+retract_distance_range_m:
+  - 0.003
+  - 0.012
+sweep_duration_range_s:
+  - 0.6
+  - 1.4
+sweep_arc_range_rad:
+  - 0.3
+  - 1.2
+rotate_duration_range_s:
+  - 0.4
+  - 1.0
+rotate_angle_range_rad:
+  - 0.5
+  - 1.5
+probe_duration_range_s:
+  - 0.6
+  - 1.4
+probe_hold_range_s:
+  - 0.15
+  - 0.45
+target_orientation_jitter_rad: 0.26
+jaw_value_range:
+  - 0.0
+  - 1.0
+jaw_change_probability: 0.4

@@ -17,7 +17,7 @@ DEFAULT_BRAIN_FORCEPS_SCENE_TEMPLATE = (
     / "auto_surgery"
     / "env"
     / "sofa_scenes"
-    / "brain_dejavu_forceps_poc.scn"
+    / "brain_dejavu_episodic.scn.template"
 )
 
 

@@ -8,6 +8,16 @@ Phase 0 Python infrastructure: typed schemas, `Environment` protocol (sim/real),
 uv sync --frozen --all-groups --extra train
 ```
 
+If you update forceps collision geometry, regenerate the deterministic proxy first:
+
+```bash
+AUTO_SURGERY_DEJAVU_ROOT=/path/to/dejavu \
+  uv run --group prep python scripts/prep_forceps_collision_meshes.py --force --print-hash
+```
+
+The generated artifact and contract live at `assets/forceps/shaft_tip_collision.obj` and
+`assets/forceps/dejavu_default.yaml`.
+
 If you need a real SOFA runtime, bootstrap it first via
 [docs/SOFA_INSTALLATION.md](docs/SOFA_INSTALLATION.md) before non-stub stage-0 runs.
 
@@ -119,8 +129,8 @@ Preferred usage routes all scripts through `auto-surgery`:
 
 ```bash
 uv run auto-surgery smoke --skip-gpu
-uv run auto-surgery capture-brain-forceps-video --qgl-view <path> --frames 180
-uv run auto-surgery capture-brain-forceps-pngs --qgl-view <path> --frames 180
+uv run auto-surgery capture-brain-forceps-video --qgl-view <path> --ticks 180
+uv run auto-surgery capture-brain-forceps-pngs --qgl-view <path> --ticks 180
 uv run auto-surgery run-one-episode --storage-root-uri file:///tmp/auto-surgery-sofa-smoke/ --case-id demo --session-id s1
 uv run auto-surgery train-idm --dataset-manifest-uri file:///tmp/auto-surgery-sofa-smoke/cases/demo/sessions/s1/manifest.json --out-ckpt-uri /tmp/idm.pt
 uv run auto-surgery extract-pseudo-actions --dataset-manifest-uri ... --idm-ckpt-uri ... --out-root-uri file:///tmp/auto-surgery-sofa-smoke/ --out-case-id demo_derived --out-session-id s2
@@ -144,13 +154,17 @@ fi
 # Capture brain-forceps rollout as mp4 in one command
 bash infra/sofa/with-sofa.sh uv run auto-surgery capture-brain-forceps-video \
   --qgl-view "$AUTO_SURGERY_DEJAVU_ROOT/scenes/brain/brain.scn.qglviewer.view" \
-  --frames 180 \
+  --ticks 180 \
+  --scene-config "$REPO_ROOT/configs/scenes/dejavu_brain.yaml" \
+  --motion-config "$REPO_ROOT/configs/motion/default.yaml" \
   --fps 30 \
   --output "$REPO_ROOT/artifacts/brain_forceps.mp4"
 
 bash infra/sofa/with-sofa.sh uv run auto-surgery capture-brain-forceps-pngs \
   --qgl-view "$AUTO_SURGERY_DEJAVU_ROOT/scenes/brain/brain.scn.qglviewer.view" \
-  --frames 180 \
+  --ticks 180 \
+  --scene-config "$REPO_ROOT/configs/scenes/dejavu_brain.yaml" \
+  --motion-config "$REPO_ROOT/configs/motion/default.yaml" \
   --output-dir "$REPO_ROOT/artifacts" \
   --prefix brain_forceps_sample
 ```

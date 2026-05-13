@@ -15,6 +15,10 @@ def blobs_dir(case_id: str, session_id: str) -> str:
     return f"{session_prefix(case_id, session_id)}/blobs"
 
 
+def forceps_trace_path(case_id: str, session_id: str) -> str:
+    return f"{blobs_dir(case_id, session_id)}/forceps_contract_trace.parquet"
+
+
 def session_manifest_path(case_id: str, session_id: str) -> str:
     return f"{session_prefix(case_id, session_id)}/session_manifest.json"
 

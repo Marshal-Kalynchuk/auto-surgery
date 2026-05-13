@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
+import argparse
+import warnings
 
 import typer
 
 from auto_surgery.env.capture import default_captures
 from auto_surgery.recording import brain_forceps
 from auto_surgery.schemas.manifests import SceneConfig
+from auto_surgery.schemas.scene import ToolSpec
 from auto_surgery.training.bootstrap import run_m1_tiny_overfit, run_m2_contrastive_stub
 from auto_surgery.training.extract_pseudo_actions import (
     extract_pseudo_actions as run_extract_pseudo_actions,
@@ -22,8 +24,55 @@ from auto_surgery.training.sofa_forceps_smoke import run_dejavu_forceps_smoke
 from auto_surgery.training.smoke import run_blackwell_smoke
 
 app = typer.Typer(no_args_is_help=True)
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BRAINFORCEPS_DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "artifacts"
+BRAINFORCEPS_DEFAULT_SCENE_CONFIG = (
+    PROJECT_ROOT / "configs" / "scenes" / "dejavu_brain.yaml"
+)
+BRAINFORCEPS_DEFAULT_MOTION_CONFIG = (
+    PROJECT_ROOT / "configs" / "motion" / "default.yaml"
+)
+BRAINFORCEPS_DEFAULT_RANDOMIZATION_PRESET = (
+    PROJECT_ROOT / "configs" / "randomization" / "default.yaml"
+)
+
+
+def _resolve_path(path: Path | None, *, fallback: Path | None = None) -> Path:
+    if path is None:
+        if fallback is None:
+            raise ValueError("No path provided and no fallback available.")
+        return fallback
+
+    resolved = path.expanduser()
+    if not resolved.is_absolute():
+        return PROJECT_ROOT / resolved
+    return resolved
+
+
+def _resolve_master_seed(
+    *,
+    canonical: int | None,
+    legacy: int | None,
+    command: str,
+) -> int:
+    if canonical is None and legacy is None:
+        raise typer.BadParameter(
+            "Either --master-seed (preferred) or --seed is required.",
+            param_hint=f"{command}:--master-seed",
+        )
+    if canonical is not None and legacy is not None and int(canonical) != int(legacy):
+        raise typer.BadParameter(
+            "Conflicting values were provided for --master-seed and deprecated --seed.",
+            param_hint=f"{command}:--seed",
+        )
+    if legacy is not None:
+        warnings.warn(
+            "The --seed flag is deprecated; use --master-seed instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return int(legacy)
+    return int(canonical)
 
 
 @app.command()
@@ -52,51 +101,42 @@ def bootstrap_m2() -> None:
 
 
 def _build_video_namespace(
-    qgl_view: Path | None,
-    scene: Path | None,
+    scene_config: Path | None,
+    motion_config: Path | None,
+    randomization_preset: Path | None,
+    num_episodes: int,
+    master_seed: int,
     output: Path | None,
     output_dir: Path,
     prefix: str,
-    frames: int,
+    ticks: int,
     width: int,
     height: int,
-    seed: int,
-    position_x: float,
-    position_y: float,
-    position_z: float,
-    look_at_x: float,
-    look_at_y: float,
-    look_at_z: float,
-    qgl_distance: float | None,
     fps: float,
-    joint_start: float,
-    joint_step: float,
-    joint_sine_amplitude: float,
-    joint_sine_frequency: float,
-    base_timestamp: int,
-    timestamp_step: int,
     overwrite: bool,
     keep_frames: bool,
 ) -> argparse.Namespace:
+    resolved_scene_config = _resolve_path(scene_config, fallback=BRAINFORCEPS_DEFAULT_SCENE_CONFIG)
+    resolved_motion_config = _resolve_path(motion_config, fallback=BRAINFORCEPS_DEFAULT_MOTION_CONFIG)
+    resolved_output_dir = _resolve_path(output_dir, fallback=BRAINFORCEPS_DEFAULT_OUTPUT_DIR)
+    resolved_output = None if output is None else _resolve_path(output)
     return argparse.Namespace(
-        scene=str(scene) if scene is not None else None,
-        output_dir=output_dir,
+        scene_config=str(resolved_scene_config),
+        motion_config=str(resolved_motion_config),
+        randomization_preset=str(
+            _resolve_path(
+                randomization_preset,
+                fallback=BRAINFORCEPS_DEFAULT_RANDOMIZATION_PRESET,
+            )
+        ),
+        output_dir=resolved_output_dir,
+        num_episodes=num_episodes,
         prefix=prefix,
-        frames=frames,
+        ticks=ticks,
         width=width,
         height=height,
-        seed=seed,
-        position=(position_x, position_y, position_z),
-        look_at=(look_at_x, look_at_y, look_at_z),
-        qgl_view=str(qgl_view) if qgl_view is not None else None,
-        qgl_distance=qgl_distance,
-        joint_start=joint_start,
-        joint_step=joint_step,
-        joint_sine_amplitude=joint_sine_amplitude,
-        joint_sine_frequency=joint_sine_frequency,
-        base_timestamp=base_timestamp,
-        timestamp_step=timestamp_step,
-        output=output,
+        master_seed=master_seed,
+        output=resolved_output,
         fps=fps,
         overwrite=overwrite,
         keep_frames=keep_frames,
@@ -104,62 +144,52 @@ def _build_video_namespace(
 
 
 def _build_png_namespace(
-    qgl_view: Path | None,
-    scene: Path | None,
+    scene_config: Path | None,
+    motion_config: Path | None,
+    randomization_preset: Path | None,
+    num_episodes: int,
+    master_seed: int,
     output_dir: Path,
     prefix: str,
-    frames: int,
+    ticks: int,
     width: int,
     height: int,
-    seed: int,
-    position_x: float,
-    position_y: float,
-    position_z: float,
-    look_at_x: float,
-    look_at_y: float,
-    look_at_z: float,
-    qgl_distance: float | None,
-    joint_start: float,
-    joint_step: float,
-    joint_sine_amplitude: float,
-    joint_sine_frequency: float,
-    base_timestamp: int,
-    timestamp_step: int,
     overwrite: bool,
 ) -> argparse.Namespace:
+    resolved_scene_config = _resolve_path(scene_config, fallback=BRAINFORCEPS_DEFAULT_SCENE_CONFIG)
+    resolved_motion_config = _resolve_path(motion_config, fallback=BRAINFORCEPS_DEFAULT_MOTION_CONFIG)
+    resolved_output_dir = _resolve_path(output_dir, fallback=BRAINFORCEPS_DEFAULT_OUTPUT_DIR)
     return argparse.Namespace(
-        scene=str(scene) if scene is not None else None,
-        output_dir=output_dir,
+        scene_config=str(resolved_scene_config),
+        motion_config=str(resolved_motion_config),
+        randomization_preset=str(
+            _resolve_path(
+                randomization_preset,
+                fallback=BRAINFORCEPS_DEFAULT_RANDOMIZATION_PRESET,
+            )
+        ),
+        output_dir=resolved_output_dir,
+        num_episodes=num_episodes,
         prefix=prefix,
-        frames=frames,
+        ticks=ticks,
         width=width,
         height=height,
-        seed=seed,
-        position=(position_x, position_y, position_z),
-        look_at=(look_at_x, look_at_y, look_at_z),
-        qgl_view=str(qgl_view) if qgl_view is not None else None,
-        qgl_distance=qgl_distance,
-        joint_start=joint_start,
-        joint_step=joint_step,
-        joint_sine_amplitude=joint_sine_amplitude,
-        joint_sine_frequency=joint_sine_frequency,
-        base_timestamp=base_timestamp,
-        timestamp_step=timestamp_step,
+        master_seed=master_seed,
         overwrite=overwrite,
     )
 
 
 @app.command()
 def capture_brain_forceps_video(
-    qgl_view: Path | None = typer.Option(
+    scene_config: Path | None = typer.Option(
         None,
-        "--qgl-view",
-        help="Path to a qglviewer view file (position + quaternion).",
+        "--scene-config",
+        help="Path to a scene YAML config (camera pose is sourced from poc_scene_path).",
     ),
-    scene: Path | None = typer.Option(
+    motion_config: Path | None = typer.Option(
         None,
-        "--scene",
-        help="Path to a SOFA .scn scene file.",
+        "--motion-config",
+        help="Path to a motion YAML config.",
     ),
     output: Path | None = typer.Option(
         None,
@@ -176,79 +206,29 @@ def capture_brain_forceps_video(
         "--prefix",
         help="Filename prefix for captured frames.",
     ),
-    frames: int = typer.Option(180, "--frames", min=1, help="Number of frames to capture."),
+    ticks: int = typer.Option(180, "--ticks", min=1, help="Number of control ticks to run."),
     width: int = typer.Option(950, "--width", min=1, help="Capture width in pixels."),
     height: int = typer.Option(700, "--height", min=1, help="Capture height in pixels."),
-    seed: int = typer.Option(7, "--seed", help="Random seed used for EnvConfig during reset."),
-    position_x: float = typer.Option(
-        0.0,
-        "--position-x",
-        help="Offscreen camera X coordinate when not using --qgl-view.",
+    randomization_preset: Path | None = typer.Option(
+        BRAINFORCEPS_DEFAULT_RANDOMIZATION_PRESET,
+        "--randomization-preset",
+        help="Path to a piece-4 randomization preset YAML.",
     ),
-    position_y: float = typer.Option(
-        45.0,
-        "--position-y",
-        help="Offscreen camera Y coordinate when not using --qgl-view.",
-    ),
-    position_z: float = typer.Option(
-        140.0,
-        "--position-z",
-        help="Offscreen camera Z coordinate when not using --qgl-view.",
-    ),
-    look_at_x: float = typer.Option(
-        0.0,
-        "--look-at-x",
-        help="Camera look-at X coordinate.",
-    ),
-    look_at_y: float = typer.Option(
-        0.0,
-        "--look-at-y",
-        help="Camera look-at Y coordinate.",
-    ),
-    look_at_z: float = typer.Option(
-        0.0,
-        "--look-at-z",
-        help="Camera look-at Z coordinate.",
-    ),
-    qgl_distance: float | None = typer.Option(
+    num_episodes: int = typer.Option(1, "--num-episodes", help="How many episodes to record."),
+    master_seed: int | None = typer.Option(
         None,
-        "--qgl-distance",
+        "--master-seed",
+        help="Master seed for episode sampling.",
+    ),
+    seed: int | None = typer.Option(
+        None,
+        "--seed",
         help=(
-            "Explicit look-at distance from qgl camera position. If omitted, uses "
-            "distance from qgl position to --look-at."
+            "Deprecated compatibility alias for --master-seed. "
+            "Use --master-seed for new workflows."
         ),
     ),
     fps: float = typer.Option(30.0, "--fps", min=0.1, help="Output playback frame rate."),
-    joint_start: float = typer.Option(
-        0.0,
-        "--joint-start",
-        help="Initial j0 action value for forceps.",
-    ),
-    joint_step: float = typer.Option(
-        0.0,
-        "--joint-step",
-        help="Increment added to j0 per frame.",
-    ),
-    joint_sine_amplitude: float = typer.Option(
-        0.0,
-        "--joint-sine-amplitude",
-        help="Optional sine motion amplitude added to j0.",
-    ),
-    joint_sine_frequency: float = typer.Option(
-        0.1,
-        "--joint-sine-frequency",
-        help="Frequency multiplier for optional sine motion.",
-    ),
-    base_timestamp: int = typer.Option(
-        1_000_000,
-        "--base-timestamp",
-        help="Timestamp base used for the first frame (ns).",
-    ),
-    timestamp_step: int = typer.Option(
-        1,
-        "--timestamp-step",
-        help="Timestamp increment (ns) between frames.",
-    ),
     overwrite: bool = typer.Option(
         False,
         "--overwrite",
@@ -261,31 +241,25 @@ def capture_brain_forceps_video(
     ),
 ) -> None:
     """Capture SOFA brain-forceps PNGs and render them into an MP4 in one command."""
+    resolved_master_seed = _resolve_master_seed(
+        canonical=master_seed,
+        legacy=seed,
+        command="capture-brain-forceps-video",
+    )
 
     command_args = _build_video_namespace(
-        qgl_view=qgl_view,
-        scene=scene,
+        scene_config=scene_config,
+        motion_config=motion_config,
         output=output,
         output_dir=output_dir,
         prefix=prefix,
-        frames=frames,
+        randomization_preset=randomization_preset,
+        num_episodes=num_episodes,
+        master_seed=resolved_master_seed,
+        ticks=ticks,
         width=width,
         height=height,
-        seed=seed,
-        position_x=position_x,
-        position_y=position_y,
-        position_z=position_z,
-        look_at_x=look_at_x,
-        look_at_y=look_at_y,
-        look_at_z=look_at_z,
-        qgl_distance=qgl_distance,
         fps=fps,
-        joint_start=joint_start,
-        joint_step=joint_step,
-        joint_sine_amplitude=joint_sine_amplitude,
-        joint_sine_frequency=joint_sine_frequency,
-        base_timestamp=base_timestamp,
-        timestamp_step=timestamp_step,
         overwrite=overwrite,
         keep_frames=keep_frames,
     )
@@ -295,15 +269,15 @@ def capture_brain_forceps_video(
 
 @app.command()
 def capture_brain_forceps_pngs(
-    qgl_view: Path | None = typer.Option(
+    scene_config: Path | None = typer.Option(
         None,
-        "--qgl-view",
-        help="Path to a qglviewer view file (position + quaternion).",
+        "--scene-config",
+        help="Path to a scene YAML config (camera pose is sourced from poc_scene_path).",
     ),
-    scene: Path | None = typer.Option(
+    motion_config: Path | None = typer.Option(
         None,
-        "--scene",
-        help="Path to a SOFA .scn scene file.",
+        "--motion-config",
+        help="Path to a motion YAML config.",
     ),
     output_dir: Path = typer.Option(
         BRAINFORCEPS_DEFAULT_OUTPUT_DIR,
@@ -315,77 +289,27 @@ def capture_brain_forceps_pngs(
         "--prefix",
         help="Filename prefix for captured frames.",
     ),
-    frames: int = typer.Option(180, "--frames", min=1, help="Number of frames to capture."),
+    ticks: int = typer.Option(180, "--ticks", min=1, help="Number of control ticks to run."),
     width: int = typer.Option(950, "--width", min=1, help="Capture width in pixels."),
     height: int = typer.Option(700, "--height", min=1, help="Capture height in pixels."),
-    seed: int = typer.Option(7, "--seed", help="Random seed used for EnvConfig during reset."),
-    position_x: float = typer.Option(
-        0.0,
-        "--position-x",
-        help="Offscreen camera X coordinate when not using --qgl-view.",
+    randomization_preset: Path | None = typer.Option(
+        BRAINFORCEPS_DEFAULT_RANDOMIZATION_PRESET,
+        "--randomization-preset",
+        help="Path to a piece-4 randomization preset YAML.",
     ),
-    position_y: float = typer.Option(
-        45.0,
-        "--position-y",
-        help="Offscreen camera Y coordinate when not using --qgl-view.",
-    ),
-    position_z: float = typer.Option(
-        140.0,
-        "--position-z",
-        help="Offscreen camera Z coordinate when not using --qgl-view.",
-    ),
-    look_at_x: float = typer.Option(
-        0.0,
-        "--look-at-x",
-        help="Camera look-at X coordinate.",
-    ),
-    look_at_y: float = typer.Option(
-        0.0,
-        "--look-at-y",
-        help="Camera look-at Y coordinate.",
-    ),
-    look_at_z: float = typer.Option(
-        0.0,
-        "--look-at-z",
-        help="Camera look-at Z coordinate.",
-    ),
-    qgl_distance: float | None = typer.Option(
+    num_episodes: int = typer.Option(1, "--num-episodes", help="How many episodes to record."),
+    master_seed: int | None = typer.Option(
         None,
-        "--qgl-distance",
+        "--master-seed",
+        help="Master seed for episode sampling.",
+    ),
+    seed: int | None = typer.Option(
+        None,
+        "--seed",
         help=(
-            "Explicit look-at distance from qgl camera position. If omitted, uses "
-            "distance from qgl position to --look-at."
+            "Deprecated compatibility alias for --master-seed. "
+            "Use --master-seed for new workflows."
         ),
-    ),
-    joint_start: float = typer.Option(
-        0.0,
-        "--joint-start",
-        help="Initial j0 action value for forceps.",
-    ),
-    joint_step: float = typer.Option(
-        0.0,
-        "--joint-step",
-        help="Increment added to j0 per frame.",
-    ),
-    joint_sine_amplitude: float = typer.Option(
-        0.0,
-        "--joint-sine-amplitude",
-        help="Optional sine motion amplitude added to j0.",
-    ),
-    joint_sine_frequency: float = typer.Option(
-        0.1,
-        "--joint-sine-frequency",
-        help="Frequency multiplier for optional sine motion.",
-    ),
-    base_timestamp: int = typer.Option(
-        1_000_000,
-        "--base-timestamp",
-        help="Timestamp base used for the first frame (ns).",
-    ),
-    timestamp_step: int = typer.Option(
-        1,
-        "--timestamp-step",
-        help="Timestamp increment (ns) between frames.",
     ),
     overwrite: bool = typer.Option(
         False,
@@ -394,29 +318,23 @@ def capture_brain_forceps_pngs(
     ),
 ) -> None:
     """Capture SOFA brain-forceps PNG frames without creating a movie."""
+    resolved_master_seed = _resolve_master_seed(
+        canonical=master_seed,
+        legacy=seed,
+        command="capture-brain-forceps-pngs",
+    )
 
     command_args = _build_png_namespace(
-        qgl_view=qgl_view,
-        scene=scene,
+        scene_config=scene_config,
+        motion_config=motion_config,
+        randomization_preset=randomization_preset,
+        num_episodes=num_episodes,
+        master_seed=resolved_master_seed,
         output_dir=output_dir,
         prefix=prefix,
-        frames=frames,
+        ticks=ticks,
         width=width,
         height=height,
-        seed=seed,
-        position_x=position_x,
-        position_y=position_y,
-        position_z=position_z,
-        look_at_x=look_at_x,
-        look_at_y=look_at_y,
-        look_at_z=look_at_z,
-        qgl_distance=qgl_distance,
-        joint_start=joint_start,
-        joint_step=joint_step,
-        joint_sine_amplitude=joint_sine_amplitude,
-        joint_sine_frequency=joint_sine_frequency,
-        base_timestamp=base_timestamp,
-        timestamp_step=timestamp_step,
         overwrite=overwrite,
     )
     frame_paths = brain_forceps.run_capture_brain_forceps_pngs(command_args)
@@ -437,20 +355,19 @@ def run_one_episode(
     seed: int = typer.Option(7),
     rgb: bool = typer.Option(False, help="Persist native SOFA RGB blobs."),
     scene_id: str = typer.Option("dejavu_brain"),
-    tool_id: str = typer.Option("forceps"),
+    tool_id: str = typer.Option("dejavu_forceps"),
 ) -> None:
     """Materialize one dataset manifest + optional RGB blobs."""
     captures = default_captures(include_stereo_depth_stubs=False) if rgb else []
     scene_cfg = SceneConfig(
         scene_id=scene_id,
-        tool_id=tool_id,
-        scene_xml_path=sofa_scene_path,
+        tool=ToolSpec(tool_id=tool_id),
     )
     ds = run_sofa_rollout_dataset(
         storage_root_uri=storage_root_uri,
         case_id=case_id,
         session_id=session_id,
-        sofa_scene_path=None,
+        sofa_scene_path=sofa_scene_path,
         scene_config=scene_cfg,
         sofa_backend_factory=None,
         steps=steps,
@@ -543,10 +460,19 @@ def sofa_forceps_smoke(
         None,
         help="Optional .scn scene path. Defaults to resolved DejaVu placeholder scene.",
     ),
+    output_dir: Path | None = typer.Option(
+        None,
+        "--output-dir",
+        help="Directory where smoke frames will be written. Defaults to a session temp directory.",
+    ),
     steps: int = typer.Option(2, min=1),
 ) -> None:
     """Run quick native SOFA forceps smoke capture and print first frame path."""
-    outputs = run_dejavu_forceps_smoke(scene_path=scene_path, steps=steps)
+    outputs = run_dejavu_forceps_smoke(
+        scene_path=scene_path,
+        output_dir=output_dir,
+        steps=steps,
+    )
     if outputs:
         typer.echo(str(outputs[0]))
     else:

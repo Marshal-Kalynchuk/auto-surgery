@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<Node name="root" gravity="{{ gravity }}" dt="{{ dt }}" animate="1">
+    <RequiredPlugin name="Sofa.Component.Setting"/>
+    <RequiredPlugin name="Sofa.Component.AnimationLoop"/>
+    <RequiredPlugin name="Sofa.Component.Visual"/>
+    <RequiredPlugin name="Sofa.Component.Constraint.Projective"/>
+    <RequiredPlugin name="Sofa.Component.Collision.Detection.Algorithm"/>
+    <RequiredPlugin name="Sofa.Component.Collision.Detection.Intersection"/>
+    <RequiredPlugin name="Sofa.Component.Collision.Response.Contact"/>
+    <RequiredPlugin name="Sofa.Component.ODESolver.Backward"/>
+    <RequiredPlugin name="Sofa.Component.LinearSolver.Iterative"/>
+    <RequiredPlugin name="Sofa.Component.Topology.Container.Grid"/>
+    <RequiredPlugin name="Sofa.Component.StateContainer"/>
+    <RequiredPlugin name="Sofa.Component.Mass"/>
+    <RequiredPlugin name="Sofa.Component.SolidMechanics.FEM.Elastic"/>
+    <RequiredPlugin name="Sofa.Component.Engine.Select"/>
+    <RequiredPlugin name="Sofa.Component.IO.Mesh"/>
+    <RequiredPlugin name="Sofa.Component.Mapping.Linear"/>
+    <RequiredPlugin name="Sofa.Component.Mapping.NonLinear"/>
+    <RequiredPlugin name="Sofa.GL.Component.Rendering3D"/>
+    <!-- LightManager/DirectionalLight/SpotLight live in Sofa.GL.Component.Shader since SOFA v22.06. -->
+    <RequiredPlugin name="Sofa.GL.Component.Shader"/>
+
+    <DefaultAnimationLoop/>
+    <DefaultVisualManagerLoop name="visualLoop"/>
+
+    <CollisionPipeline verbose="0" depth="10" draw="0"/>
+    <BruteForceBroadPhase/>
+    <BVHNarrowPhase/>
+    <MinProximityIntersection name="Proximity" alarmDistance="0.1" contactDistance="0.1"/>
+    <CollisionResponse name="Response" response="PenalityContactForceField"/>
+
+    <ViewerSetting resolution="950 700"/>
+    <BackgroundSetting color="{{ background_rgb }}"/>
+    <VisualStyle displayFlags="showVisual hideCollisionModels hideForceFields hideBehaviorModels"/>
+    <OglSceneFrame/>
+
+    {{ light_manager_block }}
+
+    <Node name="Brain">
+        <EulerImplicitSolver />
+        <CGLinearSolver iterations="100" tolerance="1e-9" threshold="1e-9" />
+
+        <SparseGridTopology name="volume" fileTopology="{{ tissue_volume_mesh_path }}" n="{{ sparse_grid_n }}"/>
+        <MechanicalObject  template="Vec3d" name="gridDOFs"/>
+        <UniformMass  totalMass="{{ total_mass }}" /> 
+        <TetrahedronFEMForceField name="Corot" youngModulus="{{ young_modulus }}" poissonRatio="{{ poisson_ratio }}" method="large" rayleighStiffness="{{ rayleigh_stiffness }}" />
+
+        <BoxROI name="ROI1" box="-70 -50 -60 50 50 -20" drawBoxes="0"/>
+        <FixedConstraint template="Vec3d" indices="@ROI1.indices" drawSize="0"/>
+
+        <BoxROI name="ROI2" box="20 -50 -50 70 50 50" drawBoxes="0"/>
+        <FixedConstraint template="Vec3d" indices="@ROI2.indices" drawSize="0"/>
+
+        <BoxROI name="ROI3" box="-70 30 -60 70 50 50" drawBoxes="0"/>
+        <FixedConstraint template="Vec3d" indices="@ROI3.indices" drawSize="0"/>
+
+        <BoxROI name="ROI4" box="-70 -40 -60 70 -60 50" drawBoxes="0"/>
+        <FixedConstraint template="Vec3d" indices="@ROI4.indices" drawSize="0"/>
+
+        <Node name="Visual" activated="1">
+            <MeshOBJLoader name="tissueLoader" filename="{{ tissue_surface_mesh_path }}"/>
+            <OglModel name="Visual" src="@tissueLoader" putOnlyTexCoords="true" texturename="{{ tissue_texture_path }}" material="{{ tissue_material_string }}" />
+            <BarycentricMapping />
+        </Node>
+    </Node> 
+
+    <Node name="Skull">  
+        <Node name="Visual" activated="1">
+            <MeshOBJLoader name="skullLoader" filename="${DEJAVU_ROOT}/scenes/brain/data/surface_skull.obj" scale3d="0.92 0.92 0.92" translation="-5 -2.5 7.5"/>
+            <OglModel src="@skullLoader" putOnlyTexCoords="true" texturename="${DEJAVU_ROOT}/scenes/brain/data/texture.png" 
+            material="MAT Diffuse 1 255 255 255 1 Ambient 1 255 255 255 1 Specular 1 255 255 255 1 Emissive 1 255 255 255 1 Shininess 1 45"            
+            />
+        </Node>
+    </Node>
+
+    {{ camera_block }}
+    {{ forceps_block }}
+</Node>

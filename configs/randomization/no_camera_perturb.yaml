@@ -1,0 +1,206 @@
+tissue_material:
+  young_modulus_pa:
+    low: 1000.0
+    high: 10000.0
+  poisson_ratio:
+    low: 0.35
+    high: 0.48
+  total_mass_kg:
+    low: 0.3
+    high: 0.7
+  rayleigh_stiffness:
+    low: 0.05
+    high: 0.2
+
+tissue_topology:
+  sparse_grid_n:
+    options:
+      - [12, 12, 12]
+      - [16, 16, 16]
+      - [20, 20, 20]
+    weights:
+      - 1.0
+      - 2.0
+      - 1.0
+
+tissue_mesh:
+  scale_x:
+    low: 0.92
+    high: 1.08
+  scale_y:
+    low: 0.92
+    high: 1.08
+  scale_z:
+    low: 0.92
+    high: 1.08
+  translation_scene:
+    x:
+      low: -5.0
+      high: 5.0
+    y:
+      low: -5.0
+      high: 5.0
+    z:
+      low: -5.0
+      high: 5.0
+  bulge_probability: 0.5
+  bulge_offset_within_volume_frac:
+    x:
+      low: -0.8
+      high: 0.8
+    y:
+      low: -0.8
+      high: 0.8
+    z:
+      low: -0.8
+      high: 0.8
+  bulge_radius_scene:
+    low: 3.0
+    high: 10.0
+  bulge_amplitude_scene:
+    low: -3.0
+    high: 5.0
+
+camera:
+  lookat_offset_within_volume_frac:
+    x:
+      low: 0.0
+      high: 0.0
+    y:
+      low: 0.0
+      high: 0.0
+    z:
+      low: 0.0
+      high: 0.0
+  distance_jitter_scale:
+    low: 1.0
+    high: 1.0
+  azimuth_deg:
+    low: 0.0
+    high: 0.0
+  elevation_deg:
+    low: 0.0
+    high: 0.0
+  roll_deg:
+    low: 0.0
+    high: 0.0
+  fx_jitter_pct:
+    low: 0.0
+    high: 0.0
+  fy_jitter_pct:
+    low: 0.0
+    high: 0.0
+  principal_point_offset_px:
+    x:
+      low: 0.0
+      high: 0.0
+    y:
+      low: 0.0
+      high: 0.0
+    z:
+      low: 0.0
+      high: 0.0
+
+lighting:
+  directional_direction_scene:
+    x:
+      low: -0.5
+      high: 0.5
+    y:
+      low: -1.0
+      high: -0.3
+    z:
+      low: -0.5
+      high: 0.5
+  directional_intensity:
+    low: 0.5
+    high: 1.5
+  directional_color_rgb_tint:
+    x:
+      low: 0.9
+      high: 1.0
+    y:
+      low: 0.9
+      high: 1.0
+    z:
+      low: 0.9
+      high: 1.0
+  spot_position_scene:
+    x:
+      low: -20.0
+      high: 20.0
+    y:
+      low: 80.0
+      high: 180.0
+    z:
+      low: -30.0
+      high: 70.0
+  spot_direction_scene:
+    x:
+      low: -0.4
+      high: 0.4
+    y:
+      low: -1.0
+      high: -0.2
+    z:
+      low: -0.4
+      high: 0.4
+  spot_cone_half_angle_deg:
+    low: 20.0
+    high: 45.0
+  spot_intensity:
+    low: 0.4
+    high: 1.2
+  spot_color_rgb_tint:
+    x:
+      low: 0.9
+      high: 1.0
+    y:
+      low: 0.9
+      high: 1.0
+    z:
+      low: 0.9
+      high: 1.0
+  background_rgb:
+    x:
+      low: 0.04
+      high: 0.09
+    y:
+      low: 0.04
+      high: 0.09
+    z:
+      low: 0.06
+      high: 0.12
+
+visual_tint:
+  tissue_texture_tint_rgb:
+    x:
+      low: 0.85
+      high: 1.15
+    y:
+      low: 0.85
+      high: 1.15
+    z:
+      low: 0.85
+      high: 1.15
+  forceps_body_color_rgb:
+    x:
+      low: 0.9
+      high: 1.1
+    y:
+      low: 0.9
+      high: 1.1
+    z:
+      low: 0.9
+      high: 1.1
+  forceps_clasper_color_rgb:
+    x:
+      low: 0.9
+      high: 1.1
+    y:
+      low: 0.9
+      high: 1.1
+    z:
+      low: 0.9
+      high: 1.1
+

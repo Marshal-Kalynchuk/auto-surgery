@@ -4,9 +4,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from auto_surgery.schemas.commands import RobotCommand
+from auto_surgery.schemas.commands import Pose, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.scene import SceneGraph
-from auto_surgery.schemas.sensors import SensorBundle
+from auto_surgery.schemas.sensors import Contact, SensorBundle
 
 LOGGED_FRAME_SCHEMA_VERSION = "logged_frame_v1"
 
@@ -30,6 +30,28 @@ class TeleopInput(BaseModel):
     raw_channels: dict[str, Any] = Field(default_factory=dict)
 
 
+class ForcepsContractTrace(BaseModel):
+    """Step-aligned forceps telemetry for command/state audit trails."""
+
+    model_config = {"extra": "forbid"}
+
+    frame_index: int
+    timestamp_ns: int
+    step_sim_index: int
+    command_cycle_id: int
+    command_enable: bool
+    command_twist: Twist | None
+    tool_pose: Pose
+    tool_twist: Twist
+    tool_wrench: Vec3
+    tool_jaw: float
+    tool_in_contact: bool
+    contact_count: int
+    contacts: list[Contact] = Field(default_factory=list)
+    safety_blocked: bool
+    safety_block_reason: str | None = None
+
+
 class LoggedFrame(BaseModel):
     """One synchronized logged timestep."""
 
@@ -42,6 +64,7 @@ class LoggedFrame(BaseModel):
     scene_snapshot: SceneGraph | None = None
     commanded_action: RobotCommand | None = None
     executed_action: RobotCommand | None = None
+    forceps_trace: ForcepsContractTrace | None = None
     safety_decision: SafetyDecision | None = None
     entity_state: dict[str, Any] | None = Field(
         default=None,

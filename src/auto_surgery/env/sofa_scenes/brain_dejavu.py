@@ -20,6 +20,7 @@ from typing import Any
 from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_dejavu_root
 from auto_surgery.env.sofa_scenes.forceps import create_forceps_node
 from auto_surgery.schemas.manifests import EnvConfig
+from auto_surgery.schemas.scene import VisualOverrides, _identity_pose
 
 
 @dataclass(frozen=True)
@@ -27,9 +28,6 @@ class BrainDejavuConfig:
     """Configuration for the wrapped DejaVu brain scene."""
 
     dejavu_root: Path = field(default_factory=resolve_dejavu_root)
-    forceps_translation: tuple[float, float, float] = (0.0, -30.0, 40.0)
-    camera_position: tuple[float, float, float] = (0.0, 30.0, 90.0)
-    camera_look_at: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     # Make the result usable for offscreen screenshot capture.
     enable_rendering: bool = True
@@ -86,14 +84,24 @@ def create_brain_scene(
     # "use defaults" so factories remain usable without tight coupling.
     if config is None:
         cfg = BrainDejavuConfig()
+        tool_pose = _identity_pose()
+        visual_overrides: VisualOverrides | None = None
     elif isinstance(config, BrainDejavuConfig):
         cfg = config
+        tool_pose = _identity_pose()
+        visual_overrides = None
     elif isinstance(config, EnvConfig):
         cfg = BrainDejavuConfig()
+        tool_pose = config.scene.tool.initial_pose_scene
+        visual_overrides = config.scene.tool.visual_overrides
     elif isinstance(config, dict):
         cfg = BrainDejavuConfig(**config)
+        tool_pose = _identity_pose()
+        visual_overrides = None
     else:
         cfg = BrainDejavuConfig()
+        tool_pose = _identity_pose()
+        visual_overrides = None
 
     brain_py = (cfg.dejavu_root / "scenes/brain/brain.py").resolve()
     if not brain_py.exists():
@@ -110,10 +118,10 @@ def create_brain_scene(
     finally:
         os.chdir(cwd)
 
-    # Forceps overlay (visual-only in POC).
     create_forceps_node(
         root_node,
-        initial_translation=cfg.forceps_translation,
+        pose=tool_pose,
+        visual_overrides=visual_overrides,
     )
 
     if cfg.enable_rendering:

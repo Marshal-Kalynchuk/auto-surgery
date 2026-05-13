@@ -1,0 +1,55 @@
+# Static calibration constants for deterministic forceps defaults.
+scene_id: dejavu_brain
+tool_id: dejavu_forceps
+# Scene camera contract currently used by the default scene fixture.
+camera:
+  fx: 925.0
+  fy: 925.0
+  cx: 475.0
+  cy: 350.0
+  width: 950
+  height: 700
+initial_pose_scene:
+  position:
+    x: 0.0
+    y: -30.0
+    z: 40.0
+initial_jaw: 0.0
+# Piece-2 assembly defaults, including actuator geometry, kinematics limits, and
+# collision parameters used by the tool asset loader.
+assembly:
+  constants:
+    scale: 1.0
+    mass: 0.02
+    stiffness:
+      collision_penalty: 1000.0
+      visual_body_rgba:
+        - 1.0
+        - 0.2
+        - 0.2
+        - 1.0
+  limits:
+    jaw:
+      min: 0.0
+      max: 1.0
+      open_angle_rad: 0.30
+      closed_angle_rad: 0.0
+  offsets:
+    hinge_origin_local:
+      - 0.0
+      - 0.0
+      - 0.0
+    hinge_axis_local:
+      - 1.0
+      - 0.0
+      - 0.0
+    tool_tip_offset_local:
+      - 0.0
+      - 0.0
+      - 9.4
+  extras:
+    collision_crop_ratio: 0.2
+    collision_target_faces: 500
+collision_mesh:
+  filename: assets/forceps/shaft_tip_collision.obj
+  sha256: dabb2c0cc481561daad7e6d407e5f1ab62b09d00fa12ae0010db74fbe727727a
