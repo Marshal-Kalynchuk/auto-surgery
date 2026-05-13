@@ -8,6 +8,21 @@ from collections.abc import Mapping
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
+class MotionShaping(BaseModel):
+    """Configuration for motion shaping (bounds, scaling, biasing)."""
+
+    model_config = {"extra": "forbid"}
+
+    max_linear_m_s: float = Field(gt=0.0, description="Maximum linear speed in m/s")
+    max_angular_rad_s: float = Field(gt=0.0, description="Maximum angular speed in rad/s")
+    max_linear_accel_m_s2: float = Field(gt=0.0, description="Maximum linear acceleration in m/s^2")
+    max_angular_accel_rad_s2: float = Field(gt=0.0, description="Maximum angular acceleration in rad/s^2")
+    bias_gain_max: float = Field(ge=0.0, le=1.0, description="Maximum bias blending gain [0,1]")
+    bias_ramp_distance_m: float = Field(gt=0.0, description="Distance over which bias ramps up")
+    orientation_bias_gain: float = Field(ge=0.0, le=1.0, description="Orientation bias gain [0,1]")
+    orientation_deadband_rad: float = Field(ge=0.0, description="Angular deadband in radians")
+
+
 _RANGE_CONSTRAINTS: Mapping[str, tuple[float | None, float | None]] = {
     "approach_duration_range_s": (0.0, None),
     "dwell_duration_range_s": (0.0, None),
@@ -29,6 +44,7 @@ class MotionGeneratorConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
     seed: int = 0
+    motion_shaping_enabled: bool = False
 
     # Sequence shape.
     primitive_count_min: int = Field(default=8, ge=0)
@@ -41,6 +57,14 @@ class MotionGeneratorConfig(BaseModel):
     weight_sweep: float = Field(default=0.6, ge=0.0)
     weight_rotate: float = Field(default=0.4, ge=0.0)
     weight_probe: float = Field(default=0.8, ge=0.0)
+    # New, plan-aligned primitive weights. Keep defaults chosen to preserve
+    # backward compatibility with the legacy per-primitive defaults above.
+    weight_reach: float = Field(default=1.0, ge=0.0)
+    weight_hold: float = Field(default=0.5, ge=0.0)
+    weight_contact_reach: float = Field(default=0.7, ge=0.0)
+    weight_grip: float = Field(default=0.8, ge=0.0)
+    weight_drag: float = Field(default=0.6, ge=0.0)
+    weight_brush: float = Field(default=0.4, ge=0.0)
 
     # Per-primitive parameter ranges (SI units).
     approach_duration_range_s: tuple[float, float] = (0.6, 1.5)

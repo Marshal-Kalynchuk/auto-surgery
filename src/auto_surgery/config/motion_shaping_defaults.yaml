@@ -1,0 +1,67 @@
+## Scene-specific defaults for MotionShaping.
+## Used as a starting point for sectioned rollout and per-scene tuning.
+##
+## Keys are scene IDs from registry entries:
+## - IMPLEMENTED_SCENE_REGISTRY: "dejavu_brain"
+## - PLANNED_SCENE_REGISTRY: "dejavu_liver", "dejavu_kidney", "dejavu_eye",
+##                            "dejavu_uterus", "lapgym"
+
+dejavu_brain:
+  max_linear_m_s: 0.045
+  max_angular_rad_s: 1.20
+  max_linear_accel_m_s2: 0.080
+  max_angular_accel_rad_s2: 2.20
+  bias_gain_max: 0.75
+  bias_ramp_distance_m: 0.020
+  orientation_bias_gain: 0.45
+  orientation_deadband_rad: 0.100
+
+dejavu_liver:
+  max_linear_m_s: 0.040
+  max_angular_rad_s: 1.10
+  max_linear_accel_m_s2: 0.070
+  max_angular_accel_rad_s2: 2.00
+  bias_gain_max: 0.70
+  bias_ramp_distance_m: 0.025
+  orientation_bias_gain: 0.40
+  orientation_deadband_rad: 0.120
+
+dejavu_kidney:
+  max_linear_m_s: 0.042
+  max_angular_rad_s: 1.10
+  max_linear_accel_m_s2: 0.075
+  max_angular_accel_rad_s2: 2.00
+  bias_gain_max: 0.72
+  bias_ramp_distance_m: 0.022
+  orientation_bias_gain: 0.42
+  orientation_deadband_rad: 0.115
+
+dejavu_eye:
+  max_linear_m_s: 0.030
+  max_angular_rad_s: 0.90
+  max_linear_accel_m_s2: 0.060
+  max_angular_accel_rad_s2: 1.80
+  bias_gain_max: 0.65
+  bias_ramp_distance_m: 0.018
+  orientation_bias_gain: 0.38
+  orientation_deadband_rad: 0.140
+
+dejavu_uterus:
+  max_linear_m_s: 0.038
+  max_angular_rad_s: 1.00
+  max_linear_accel_m_s2: 0.070
+  max_angular_accel_rad_s2: 1.90
+  bias_gain_max: 0.70
+  bias_ramp_distance_m: 0.020
+  orientation_bias_gain: 0.40
+  orientation_deadband_rad: 0.120
+
+lapgym:
+  max_linear_m_s: 0.040
+  max_angular_rad_s: 1.05
+  max_linear_accel_m_s2: 0.075
+  max_angular_accel_rad_s2: 2.00
+  bias_gain_max: 0.70
+  bias_ramp_distance_m: 0.020
+  orientation_bias_gain: 0.40
+  orientation_deadband_rad: 0.120

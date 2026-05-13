@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
 
 import pytest
 
 from auto_surgery.config import load_scene_config
 from auto_surgery.randomization.scn_template import render_scene_template
-from auto_surgery.schemas.scene import MeshPerturbation, TissueAssetSpec
+from auto_surgery.schemas.commands import Pose, Quaternion, Vec3
+from auto_surgery.schemas.scene import (
+    DirectionalLight,
+    LightingSpec,
+    MeshPerturbation,
+    SpotLight,
+    TissueAssetSpec,
+)
+from auto_surgery.schemas.sensors import CameraIntrinsics
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -117,3 +126,70 @@ def test_render_template_respects_tissue_asset_overrides(tmp_path: Path) -> None
     assert f"{root}/scenes/brain/data/custom_volume.obj" in text
     assert f"{root}/scenes/brain/data/custom_surface.obj" in text
     assert f"{root}/scenes/brain/data/custom_texture.png" in text
+
+
+def test_render_template_includes_scaled_lighting_block(tmp_path: Path) -> None:
+    root = _write_fake_dejavu_root(tmp_path)
+    scene = load_scene_config(SCENE_PATH).model_copy(
+        update={
+            "lighting": LightingSpec(
+                directional=DirectionalLight(
+                    direction_scene=Vec3(x=0.0, y=-1.0, z=0.0),
+                    intensity=2.0,
+                    color_rgb=(0.2, 0.4, 0.6),
+                ),
+                spot=SpotLight(
+                    position_scene=Vec3(x=0.5, y=1.0, z=1.5),
+                    direction_scene=Vec3(x=0.0, y=-1.0, z=0.0),
+                    cone_half_angle_deg=30.0,
+                    intensity=0.5,
+                    color_rgb=(0.4, 0.8, 1.2),
+                ),
+                background_rgb=(0.05, 0.05, 0.08),
+            )
+        }
+    )
+
+    rendered = render_scene_template(scene, dejavu_root=root)
+    text = rendered.read_text(encoding="utf-8")
+    assert "<LightManager />" in text
+    assert "DirectionalLight" in text
+    assert "SpotLight" in text
+    assert "color=\"0.4 0.8 1.2\"" in text
+    assert "color=\"0.2 0.4 0.6\"" in text
+
+
+def test_render_template_camera_block_uses_up_and_fov_from_intrinsics(tmp_path: Path) -> None:
+    root = _write_fake_dejavu_root(tmp_path)
+    scene = load_scene_config(SCENE_PATH).model_copy(
+        update={
+            "camera_extrinsics_scene": Pose(
+                position=Vec3(x=1.0, y=2.0, z=3.0),
+                rotation=Quaternion(w=0.7071067811865476, x=0.7071067811865476, y=0.0, z=0.0),
+            ),
+            "camera_intrinsics": CameraIntrinsics(
+                fx=800.0,
+                fy=400.0,
+                cx=13.0,
+                cy=17.0,
+                width=200,
+                height=100,
+            ),
+        }
+    )
+    rendered = render_scene_template(scene, dejavu_root=root)
+    text = rendered.read_text(encoding="utf-8")
+    look_at_line = next(line for line in text.splitlines() if "OffscreenCamera" in line)
+    assert 'position="1 2 3"' in look_at_line
+    assert 'lookAt="1 3 3"' in look_at_line
+    assert 'up="' in look_at_line
+    up_text = look_at_line.split('up="', 1)[1].split('"', 1)[0]
+    up_vals = [float(value) for value in up_text.split(" ")]
+    assert up_vals[0] == pytest.approx(0.0, abs=1e-12)
+    assert up_vals[1] == pytest.approx(0.0, abs=1e-12)
+    assert up_vals[2] == pytest.approx(1.0, abs=1e-12)
+    assert 'widthViewport="200"' in look_at_line
+    assert 'heightViewport="100"' in look_at_line
+    expected_fov = 2.0 * math.degrees(math.atan(100.0 / (2.0 * 400.0)))
+    observed_fov = float(look_at_line.split('fieldOfView="', 1)[1].split('"', 1)[0])
+    assert math.isclose(observed_fov, expected_fov, rel_tol=0.0, abs_tol=1e-5)

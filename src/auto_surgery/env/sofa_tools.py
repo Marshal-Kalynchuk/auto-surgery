@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 from typing import Any
 
 from auto_surgery.env.sofa_scenes.forceps_assets import (
@@ -21,6 +22,7 @@ from auto_surgery.schemas.commands import (
     Twist,
     Vec3,
 )
+from auto_surgery.schemas.motion import MotionShaping
 from auto_surgery.schemas.scene import ToolSpec
 from auto_surgery.schemas.sensors import ToolState
 
@@ -455,6 +457,7 @@ def build_forceps_velocity_applier(
     tool_tip_offset_local: tuple[float, float, float] = DEFAULT_TOOL_TIP_OFFSET_LOCAL,
     jaw_ref: dict[str, float] | None = None,
     camera_pose_provider: Callable[[], Pose] | None = None,
+    motion_shaping: MotionShaping | None = None,
 ) -> Callable[[Any, RobotCommand], None]:
     """Create the action applier that drives the Rigid3d shaft DOF from twists.
 
@@ -470,7 +473,84 @@ def build_forceps_velocity_applier(
         "left_clasper": None,
         "right_clasper": None,
         "scene_id": None,
+        "motion_shaping": motion_shaping,
+        "last_applied_twist_by_dof": {},
+        "last_timestamp_ns_by_dof": {},
+        "safety_feedback_by_dof": {},
     }
+
+    def _dof_key(dof: Any | None) -> str:
+        return str(id(dof)) if dof is not None else "pending_dof"
+
+    def _feedback_record() -> dict[str, bool | float | None]:
+        return {
+            "clamped_linear": False,
+            "clamped_angular": False,
+            "scaled_linear": None,
+            "scaled_angular": None,
+        }
+
+    def _resolve_motion_shaping(action: RobotCommand) -> MotionShaping | None:
+        if not bool(getattr(action, "motion_shaping_enabled", True)):
+            return None
+        raw = getattr(action, "motion_shaping", None)
+        return raw if isinstance(raw, MotionShaping) else state["motion_shaping"]
+
+    def _norm3(vec: tuple[float, float, float]) -> float:
+        return math.sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2])
+
+    def _limit_magnitude_channel(
+        values: tuple[float, float, float],
+        previous: tuple[float, float, float],
+        *,
+        max_speed: float | None,
+        max_accel: float | None,
+        dt_s: float,
+        key_scaled: str,
+        record: dict[str, bool | float | None],
+    ) -> tuple[float, float, float]:
+        clamped = values
+        scale: float | None = None
+        if max_speed is not None:
+            magnitude = _norm3(clamped)
+            if magnitude > max_speed and magnitude > 0.0:
+                clamped, scale = (
+                    (
+                        clamped[0] * (max_speed / magnitude),
+                        clamped[1] * (max_speed / magnitude),
+                        clamped[2] * (max_speed / magnitude),
+                    ),
+                    max_speed / magnitude,
+                )
+                record["clamped_linear" if key_scaled == "scaled_linear" else "clamped_angular"] = True
+                record[key_scaled] = scale
+        if max_accel is not None and dt_s > 0.0:
+            delta = (
+                clamped[0] - previous[0],
+                clamped[1] - previous[1],
+                clamped[2] - previous[2],
+            )
+            max_delta = float(max_accel) * dt_s
+            delta_mag = _norm3(delta)
+            if max_delta > 0.0 and delta_mag > max_delta:
+                delta_scale = max_delta / delta_mag
+                clamped = (
+                    previous[0] + delta[0] * delta_scale,
+                    previous[1] + delta[1] * delta_scale,
+                    previous[2] + delta[2] * delta_scale,
+                )
+                key = "clamped_linear" if key_scaled == "scaled_linear" else "clamped_angular"
+                record[key] = True
+                current_scale = record[key_scaled]
+                record[key_scaled] = (
+                    delta_scale
+                    if current_scale is None or delta_scale < float(current_scale)
+                    else current_scale
+                )
+        return clamped
+
+    def _is_finite_twist(values: tuple[float, float, float, float, float, float]) -> bool:
+        return all(math.isfinite(value) for value in values)
 
     def _refresh_handles(scene: Any) -> None:
         scene_id = id(scene) if scene is not None else None
@@ -525,11 +605,19 @@ def build_forceps_velocity_applier(
             jaw_ref["jaw"] = float(action.tool_jaw_target)
 
         if _command_disengaged(action):
+            dof_key = _dof_key(state["dof"])
             _write_velocity_to_handle(state["dof"], _ZERO_TWIST_TUPLE)
+            if state["dof"] is not None:
+                state["last_applied_twist_by_dof"][dof_key] = _ZERO_TWIST_TUPLE
+                state["last_timestamp_ns_by_dof"][dof_key] = int(action.timestamp_ns)
+            state["safety_feedback_by_dof"][dof_key] = _feedback_record()
+            _apply_action.safety_feedback = state["safety_feedback_by_dof"]
+            _apply_action.last_applied_twist = state["last_applied_twist_by_dof"]
             _apply_claspers()
             return
 
         scene_pose = _resolve_camera_pose(scene)
+        current_shaping = _resolve_motion_shaping(action)
         scaled_camera_twist = Twist(
             linear=Vec3(
                 x=float(action.cartesian_twist.linear.x) * force_scale,
@@ -544,11 +632,76 @@ def build_forceps_velocity_applier(
             _read_pose_from_handle(state["dof"]),
             tool_tip_offset_local,
         )
-        _write_velocity_to_handle(state["dof"], shaft_twist)
+        if not _is_finite_twist(shaft_twist):
+            dof_key = _dof_key(state["dof"])
+            state["safety_feedback_by_dof"][dof_key] = _feedback_record()
+            if state["dof"] is not None:
+                state["last_applied_twist_by_dof"][dof_key] = _ZERO_TWIST_TUPLE
+                state["last_timestamp_ns_by_dof"][dof_key] = int(action.timestamp_ns)
+                _write_velocity_to_handle(state["dof"], _ZERO_TWIST_TUPLE)
+            _apply_action.safety_feedback = state["safety_feedback_by_dof"]
+            _apply_action.last_applied_twist = state["last_applied_twist_by_dof"]
+            _apply_claspers()
+            return
+
+        dof_key = _dof_key(state["dof"])
+        last_applied_twist = state["last_applied_twist_by_dof"].get(
+            dof_key, _ZERO_TWIST_TUPLE
+        )
+        previous_timestamp_ns = state["last_timestamp_ns_by_dof"].get(dof_key)
+        dt_s = 0.0
+        if previous_timestamp_ns is not None:
+            dt_s = max(0.0, (int(action.timestamp_ns) - int(previous_timestamp_ns)) / 1e9)
+
+        record = _feedback_record()
+        max_linear_m_s = float(current_shaping.max_linear_m_s) if current_shaping else None
+        max_angular_rad_s = float(current_shaping.max_angular_rad_s) if current_shaping else None
+        max_linear_accel_m_s2 = (
+            float(current_shaping.max_linear_accel_m_s2) if current_shaping else None
+        )
+        max_angular_accel_rad_s2 = (
+            float(current_shaping.max_angular_accel_rad_s2) if current_shaping else None
+        )
+
+        clamped_linear = _limit_magnitude_channel(
+            (shaft_twist[0], shaft_twist[1], shaft_twist[2]),
+            (last_applied_twist[0], last_applied_twist[1], last_applied_twist[2]),
+            max_speed=max_linear_m_s,
+            max_accel=max_linear_accel_m_s2,
+            dt_s=dt_s,
+            key_scaled="scaled_linear",
+            record=record,
+        )
+        clamped_angular = _limit_magnitude_channel(
+            (shaft_twist[3], shaft_twist[4], shaft_twist[5]),
+            (last_applied_twist[3], last_applied_twist[4], last_applied_twist[5]),
+            max_speed=max_angular_rad_s,
+            max_accel=max_angular_accel_rad_s2,
+            dt_s=dt_s,
+            key_scaled="scaled_angular",
+            record=record,
+        )
+
+        final_twist = (
+            clamped_linear[0],
+            clamped_linear[1],
+            clamped_linear[2],
+            clamped_angular[0],
+            clamped_angular[1],
+            clamped_angular[2],
+        )
+        _write_velocity_to_handle(state["dof"], final_twist)
+        state["last_applied_twist_by_dof"][dof_key] = final_twist
+        state["last_timestamp_ns_by_dof"][dof_key] = int(action.timestamp_ns)
+        state["safety_feedback_by_dof"][dof_key] = record
+        _apply_action.safety_feedback = state["safety_feedback_by_dof"]
+        _apply_action.last_applied_twist = state["last_applied_twist_by_dof"]
         _apply_claspers()
 
     if state["dof"] is not None:
         _apply_claspers()
+    _apply_action.safety_feedback = state["safety_feedback_by_dof"]
+    _apply_action.last_applied_twist = state["last_applied_twist_by_dof"]
     return _apply_action
 
 

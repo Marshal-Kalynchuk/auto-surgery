@@ -79,6 +79,15 @@ class VisualTintRandomization(BaseModel):
     forceps_clasper_color_rgb: Vec3Range | None = None
 
 
+class ToneAugmentationRandomization(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    brightness_scale: Range | None = None
+    contrast_scale: Range | None = None
+    gamma: Range | None = None
+    saturation_scale: Range | None = None
+
+
 class EpisodeRandomizationConfig(BaseModel):
     """Top-level config consumed by sample_episode."""
 
@@ -90,6 +99,7 @@ class EpisodeRandomizationConfig(BaseModel):
     camera: CameraRandomization | None = None
     lighting: LightingRandomization | None = None
     visual_tint: VisualTintRandomization | None = None
+    tone_augmentation: ToneAugmentationRandomization | None = None
 
 
 class SampleRecord(BaseModel):
@@ -106,6 +116,7 @@ class SampleRecord(BaseModel):
     camera: dict[str, Any] = Field(default_factory=dict)
     lighting: dict[str, Any] = Field(default_factory=dict)
     visual_tint: dict[str, Any] = Field(default_factory=dict)
+    tone_augmentation: dict[str, Any] = Field(default_factory=dict)
 
 
 class EpisodeSpec(BaseModel):

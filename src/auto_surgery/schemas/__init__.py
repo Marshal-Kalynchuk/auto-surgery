@@ -32,6 +32,7 @@ from auto_surgery.schemas.randomization import (
     TissueMaterialRandomization,
     TissueTopologyRandomization,
     Vec3Range,
+    ToneAugmentationRandomization,
     VisualTintRandomization,
 )
 from auto_surgery.schemas.scene import (
@@ -40,6 +41,7 @@ from auto_surgery.schemas.scene import (
     SlotRecord,
     TargetVolume,
     ToolSpec,
+    VisualToneAugmentation,
     VisualOverrides,
 )
 from auto_surgery.schemas.sensors import (
@@ -66,6 +68,7 @@ __all__ = [
     "SlotRecord",
     "TargetVolume",
     "ToolSpec",
+    "VisualToneAugmentation",
     "VisualOverrides",
     "MotionGeneratorConfig",
     "SensorBundle",
@@ -88,6 +91,7 @@ __all__ = [
     "MeshPerturbationRandomization",
     "CameraRandomization",
     "LightingRandomization",
+    "ToneAugmentationRandomization",
     "VisualTintRandomization",
     "EpisodeRandomizationConfig",
     "SampleRecord",

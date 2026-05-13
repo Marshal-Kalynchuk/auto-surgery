@@ -6,6 +6,7 @@ import math
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
+from auto_surgery.schemas.motion import MotionShaping
 
 
 class Vec3(BaseModel):
@@ -81,6 +82,20 @@ _MODE_PAYLOAD_FIELD = {
 }
 
 
+class SafetyMetadata(BaseModel):
+    """Diagnostics for runtime safety interventions."""
+
+    model_config = {"extra": "forbid"}
+
+    clamped_linear: bool
+    clamped_angular: bool
+    biased_linear: bool
+    biased_angular: bool
+    scaled_by: float | None = None
+    signed_distance_to_envelope_m: float | None = None
+    signed_distance_to_surface_m: float | None = None
+
+
 class RobotCommand(BaseModel):
     """Command issued toward the robot after safety gating."""
 
@@ -104,6 +119,9 @@ class RobotCommand(BaseModel):
         default="sim",
         description="Origin of the command: sim | policy | tele_op | scripted.",
     )
+    motion_shaping: MotionShaping | None = None
+    motion_shaping_enabled: bool = True
+    safety: SafetyMetadata | None = None
 
     @model_validator(mode="after")
     def _validate_payload(self) -> RobotCommand:

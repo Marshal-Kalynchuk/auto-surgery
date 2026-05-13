@@ -108,38 +108,74 @@ def _quat_to_matrix(rotation: Quaternion) -> np.ndarray:
 
 def _look_at_rotation(
     pose: Pose,
-) -> tuple[str, str, str]:
-    position = np.asarray(
-        [pose.position.x, pose.position.y, pose.position.z], dtype=float
-    )
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    position = np.asarray([pose.position.x, pose.position.y, pose.position.z], dtype=float)
     rotation = _quat_to_matrix(pose.rotation)
     forward = rotation @ np.array([0.0, 0.0, -1.0], dtype=float)
     up = rotation @ np.array([0.0, 1.0, 0.0], dtype=float)
     up = _normalize(up, fallback=np.array([0.0, 1.0, 0.0], dtype=float))
     look_at = position + forward
     return (
-        _format_vec(position),
-        _format_vec(look_at),
-        _format_vec(up),
+        (float(position[0]), float(position[1]), float(position[2])),
+        (float(look_at[0]), float(look_at[1]), float(look_at[2])),
+        (float(up[0]), float(up[1]), float(up[2])),
     )
 
 
 def _camera_block(scene: SceneConfig) -> str:
-    position, look_at, _ = _look_at_rotation(scene.camera_extrinsics_scene)
+    position, look_at, up = _look_at_rotation(scene.camera_extrinsics_scene)
     intrinsics = scene.camera_intrinsics
     if intrinsics.fy <= 0.0 or intrinsics.fy != intrinsics.fy:
         raise ValueError("CameraIntrinsics.fy must be finite and positive.")
     fov_deg = 2.0 * math.degrees(math.atan(intrinsics.height / (2.0 * intrinsics.fy)))
-
     return (
-        f'<OffscreenCamera position="{position}" lookAt="{look_at}" '
+        f'<OffscreenCamera position="{_format_vec(position)}" lookAt="{_format_vec(look_at)}" '
+        f'up="{_format_vec(up)}" '
         f'widthViewport="{intrinsics.width}" heightViewport="{intrinsics.height}" '
         f'fieldOfView="{_format_float(fov_deg)}" />'
     )
 
 
-def _lighting_block(_scene: SceneConfig) -> str:
-    return ""
+def _lighting_block(scene: SceneConfig) -> str:
+    directional = scene.lighting.directional
+    spot = scene.lighting.spot
+    if directional is None and spot is None:
+        return ""
+
+    light_lines: list[str] = ["    <LightManager />"]
+    if directional is not None:
+        direction = _normalize(
+            np.array(
+                [directional.direction_scene.x, directional.direction_scene.y, directional.direction_scene.z],
+                dtype=float,
+            )
+        )
+        color = np.array(directional.color_rgb, dtype=float) * directional.intensity
+        light_lines.append(
+            f'    <DirectionalLight '
+            f'direction="{_format_vec(direction)}" '
+            f'color="{_format_vec(color)}" />'
+        )
+
+    if spot is not None:
+        position = _format_vec(spot.position_scene)
+        direction = _normalize(
+            np.array(
+                [spot.direction_scene.x, spot.direction_scene.y, spot.direction_scene.z],
+                dtype=float,
+            )
+        )
+        spot_cutoff = 2.0 * float(spot.cone_half_angle_deg)
+        color = np.array(spot.color_rgb, dtype=float) * spot.intensity
+        light_lines.append(
+            f'    <SpotLight '
+            f'position="{position}" '
+            f'direction="{_format_vec(direction)}" '
+            f'cutoff="{_format_float(spot_cutoff)}" '
+            f'color="{_format_vec(color)}" />'
+        )
+
+    return "\n".join(light_lines)
 
 
 def _rigid3d_position(pose: Pose) -> str:

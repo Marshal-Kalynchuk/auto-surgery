@@ -72,6 +72,25 @@ class VisualOverrides(BaseModel):
     tissue_texture_tint_rgb: tuple[float, float, float] | None = None
 
 
+class VisualToneAugmentation(BaseModel):
+    """Per-frame deterministic visual augmentation applied at capture time."""
+
+    model_config = {"extra": "forbid"}
+
+    brightness_scale: float = Field(default=1.0, gt=0.0)
+    contrast_scale: float = Field(default=1.0, gt=0.0)
+    gamma: float = Field(default=1.0, gt=0.0)
+    saturation_scale: float = Field(default=1.0, gt=0.0)
+
+    def is_identity(self) -> bool:
+        return (
+            self.brightness_scale == 1.0
+            and self.contrast_scale == 1.0
+            and self.gamma == 1.0
+            and self.saturation_scale == 1.0
+        )
+
+
 class TissueMaterial(BaseModel):
     """FEM constants for the tissue body in the rendered `.scn`."""
 
@@ -170,7 +189,64 @@ class ToolSpec(BaseModel):
     tool_id: Literal["dejavu_forceps"] = "dejavu_forceps"
     initial_pose_scene: Pose = Field(default_factory=_identity_pose)
     initial_jaw: float = Field(default=0.0, ge=0.0, le=1.0)
+    workspace_envelope: "WorkspaceEnvelope | None" = None
+    orientation_bias: "OrientationBias" = Field(default_factory=lambda: OrientationBias())
     visual_overrides: VisualOverrides | None = None
+
+
+class WorkspaceEnvelope(BaseModel):
+    """Per-tool workspace constraint surface and safety envelope."""
+
+    model_config = {"extra": "forbid"}
+
+    def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
+        raise NotImplementedError("Workspace envelope must implement signed distance.")
+
+
+class SceneGeometryEnvelope(WorkspaceEnvelope):
+    """Envelope backed by scene-geometry signed-distance queries."""
+
+    model_config = {"extra": "forbid"}
+
+    outer_margin_m: float = Field(gt=0.0)
+    inner_margin_m: float = Field(ge=0.0)
+    no_go_regions: list[dict[str, Any]] = Field(default_factory=list)
+
+    def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
+        del p_scene  # Placeholder for geometry integration.
+        return 0.0
+
+
+class SphereEnvelope(WorkspaceEnvelope):
+    """Fallback spherical envelope around a scene center."""
+
+    model_config = {"extra": "forbid"}
+
+    center_scene: Vec3
+    radius_m: float = Field(gt=0.0)
+    outer_margin_m: float = Field(gt=0.0)
+    inner_margin_m: float = Field(ge=0.0)
+
+    def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
+        dx = p_scene.x - self.center_scene.x
+        dy = p_scene.y - self.center_scene.y
+        dz = p_scene.z - self.center_scene.z
+        center_distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+        return center_distance - self.radius_m
+
+
+WorkspaceEnvelope = SceneGeometryEnvelope | SphereEnvelope
+
+
+class OrientationBias(BaseModel):
+    """Per-tool orientation bias configuration."""
+
+    model_config = {"extra": "forbid"}
+
+    forward_axis_local: Vec3 = Field(default_factory=lambda: Vec3(x=0.0, y=0.0, z=1.0))
+    surface_normal_blend: float = Field(default=0.7, ge=0.0, le=1.0)
+    gain: float = Field(default=0.0, ge=0.0)
+    deadband_rad: float = Field(default=0.0, ge=0.0)
 
 
 class TargetVolume(BaseModel):
@@ -232,6 +308,7 @@ class SceneConfig(BaseModel):
         default_factory=MeshPerturbation
     )
     lighting: LightingSpec = Field(default_factory=LightingSpec)
+    tone_augmentation: VisualToneAugmentation = Field(default_factory=VisualToneAugmentation)
 
     @model_validator(mode="before")
     @classmethod

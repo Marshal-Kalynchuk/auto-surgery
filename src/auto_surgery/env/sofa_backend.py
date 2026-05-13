@@ -8,11 +8,12 @@ import io
 import re
 from typing import Any, Protocol, Sequence
 from pathlib import Path
+import numpy as np
 
 from auto_surgery.schemas.commands import Pose, Quaternion, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.manifests import EnvConfig
 from auto_surgery.schemas.results import StepResult
-from auto_surgery.schemas.scene import SceneConfig, SceneGraph
+from auto_surgery.schemas.scene import SceneConfig, SceneGraph, VisualToneAugmentation
 from auto_surgery.schemas.sensors import (
     CameraIntrinsics,
     CameraView,
@@ -135,6 +136,55 @@ def _as_int(value: Any, default: int) -> int:
         return default
 
 
+def _apply_tone_augmentation(
+    frame_bytes: bytes,
+    tone: VisualToneAugmentation,
+) -> bytes:
+    if tone.is_identity():
+        return frame_bytes
+
+    try:
+        from PIL import Image
+    except ImportError:
+        return frame_bytes
+
+    try:
+        with io.BytesIO(frame_bytes) as input_buffer:
+            with Image.open(input_buffer) as image:
+                rgb = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+    except Exception:
+        return frame_bytes
+
+    rgb = np.clip(rgb * float(tone.brightness_scale), 0.0, 1.0)
+    rgb = np.clip(
+        (rgb - 0.5) * float(tone.contrast_scale) + 0.5,
+        0.0,
+        1.0,
+    )
+
+    gamma = float(tone.gamma)
+    if gamma > 0.0:
+        rgb = np.power(rgb, 1.0 / gamma)
+
+    luma = (
+        0.2126 * rgb[:, :, 0]
+        + 0.7152 * rgb[:, :, 1]
+        + 0.0722 * rgb[:, :, 2]
+    )
+    rgb = np.stack(
+        (
+            luma + (rgb[:, :, 0] - luma) * float(tone.saturation_scale),
+            luma + (rgb[:, :, 1] - luma) * float(tone.saturation_scale),
+            luma + (rgb[:, :, 2] - luma) * float(tone.saturation_scale),
+        ),
+        axis=2,
+    )
+    rgb = np.clip(rgb, 0.0, 1.0)
+    with io.BytesIO() as output_buffer:
+        Image.fromarray((rgb * 255.0).astype(np.uint8)).save(output_buffer, format="PNG")
+        return output_buffer.getvalue()
+
+
 def _render_camera_frame_to_png(
     scene_root: Any,
     *,
@@ -203,6 +253,7 @@ class _NativeSofaBackend:
         self._scene_camera_extrinsics = self._default_camera_extrinsics()
         self._scene_camera_intrinsics = self._default_camera_intrinsics()
         self._scene_background_rgb = (0.0, 0.0, 0.0)
+        self._scene_tone_augmentation = VisualToneAugmentation()
         self._latest_scene = SceneGraph(
             frame_index=0, events=[{"phase": "created", "backend": module_name}]
         )
@@ -419,6 +470,7 @@ class _NativeSofaBackend:
         self._scene_camera_extrinsics = config.scene.camera_extrinsics_scene
         self._scene_camera_intrinsics = self._coerce_intrinsics(config.scene.camera_intrinsics)
         self._scene_background_rgb = self._coerce_background_rgb(config.scene.lighting.background_rgb)
+        self._scene_tone_augmentation = config.scene.tone_augmentation
         if self._scene_factory is not None:
             # Build the scene graph in-process via the provided Python factory.
             core = getattr(self._module, "Core", None)
@@ -515,6 +567,7 @@ class _NativeSofaBackend:
                 camera_intrinsics=self._scene_camera_intrinsics,
                 background_rgb=self._scene_background_rgb,
             )
+        frame_rgb = _apply_tone_augmentation(frame_rgb, tone=self._scene_tone_augmentation)
         return frame_rgb
 
     def step(self, action: RobotCommand) -> StepResult:

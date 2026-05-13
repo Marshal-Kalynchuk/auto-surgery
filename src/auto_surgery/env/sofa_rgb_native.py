@@ -164,6 +164,29 @@ def _pose_look_at(
     )
 
 
+def _pose_up(pose: Pose) -> tuple[float, float, float]:
+    x = float(pose.rotation.x)
+    y = float(pose.rotation.y)
+    z = float(pose.rotation.z)
+    w = float(pose.rotation.w)
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if norm <= 0.0:
+        return (0.0, 1.0, 0.0)
+    x /= norm
+    y /= norm
+    z /= norm
+    w /= norm
+
+    up_x = 2.0 * x * y - 2.0 * z * w
+    up_y = 1.0 - 2.0 * x * x - 2.0 * z * z
+    up_z = 2.0 * y * z + 2.0 * w * x
+    up_norm = math.sqrt(up_x * up_x + up_y * up_y + up_z * up_z)
+    if up_norm <= 0.0:
+        return (0.0, 1.0, 0.0)
+    inv_up = 1.0 / up_norm
+    return (up_x * inv_up, up_y * inv_up, up_z * inv_up)
+
+
 def _coerce_intrinsics_for_capture(camera_intrinsics: CameraIntrinsics | None) -> CameraIntrinsics:
     if camera_intrinsics is None:
         return CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=950, height=700)
@@ -278,6 +301,7 @@ def attach_capture_camera(
     height: int | None = None,
     position: tuple[float, float, float] | None = None,
     look_at: tuple[float, float, float] | None = None,
+    up: tuple[float, float, float] | None = None,
     camera_pose: Pose | None = None,
     camera_intrinsics: CameraIntrinsics | None = None,
 ) -> Any:
@@ -292,18 +316,28 @@ def attach_capture_camera(
         resolved_height = 700
     resolved_position = position
     resolved_look_at = look_at
+    resolved_up = up
     if camera_pose is not None:
         pose_position = _pose_position(camera_pose)
         if resolved_position is None:
             resolved_position = pose_position
         if resolved_look_at is None:
             resolved_look_at = _pose_look_at(camera_pose)
+        if resolved_up is None:
+            resolved_up = _pose_up(camera_pose)
     if resolved_position is None:
         resolved_position = (0.0, 30.0, 90.0)
     if resolved_look_at is None:
         resolved_look_at = (0.0, 0.0, 0.0)
+    if resolved_up is None:
+        resolved_up = (0.0, 1.0, 0.0)
     if resolved_width <= 0 or resolved_height <= 0:
         raise ValueError("render width/height must be positive ints.")
+    if resolved_intrinsics.fy <= 0.0:
+        raise ValueError("CameraIntrinsics.fy must be finite and positive.")
+    field_of_view = 2.0 * math.degrees(
+        math.atan(float(resolved_intrinsics.height) / (2.0 * float(resolved_intrinsics.fy)))
+    )
 
     existing_camera = _get_camera(root_node)
     if existing_camera is not None:
@@ -324,9 +358,10 @@ def attach_capture_camera(
             heightViewport=resolved_height,
             position=list(resolved_position),
             lookAt=list(resolved_look_at),
+            up=list(resolved_up),
             zNear=0.1,
             zFar=1000.0,
-            fieldOfView=45.0,
+            fieldOfView=float(field_of_view),
             projectionType=0,
             computeZClip=False,
             save_frame_before_first_step=False,

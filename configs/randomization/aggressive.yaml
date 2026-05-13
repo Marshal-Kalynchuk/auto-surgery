@@ -37,14 +37,14 @@ tissue_mesh:
     high: 1.15
   translation_scene:
     x:
-      low: -10.0
-      high: 10.0
+      low: 0.0
+      high: 0.0
     y:
-      low: -10.0
-      high: 10.0
+      low: 0.0
+      high: 0.0
     z:
-      low: -10.0
-      high: 10.0
+      low: 0.0
+      high: 0.0
   bulge_probability: 0.85
   bulge_offset_within_volume_frac:
     x:

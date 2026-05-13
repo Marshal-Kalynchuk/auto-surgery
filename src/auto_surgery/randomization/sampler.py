@@ -15,6 +15,7 @@ from auto_surgery.schemas.randomization import (
     EpisodeRandomizationConfig,
     EpisodeSpec,
     LightingRandomization,
+    ToneAugmentationRandomization,
     MeshPerturbationRandomization,
     SampleRecord,
     TissueMaterialRandomization,
@@ -26,6 +27,7 @@ from auto_surgery.schemas.scene import (
     DirectionalLight,
     LightingSpec,
     MeshPerturbation,
+    VisualToneAugmentation,
     SceneConfig,
     SpotLight,
     TargetVolume,
@@ -47,6 +49,7 @@ _AXIS_NAMES = (
     "camera",
     "lighting",
     "visual_tint",
+    "tone_augmentation",
     "motion",
 )
 
@@ -891,6 +894,60 @@ def _sample_visual_tint(
     return base_visual, updates
 
 
+def _sample_tone_augmentation(
+    base: VisualToneAugmentation,
+    randomization: ToneAugmentationRandomization | None,
+    rng: np.random.Generator,
+) -> tuple[VisualToneAugmentation, dict[str, Any]]:
+    if randomization is None:
+        return base, {}
+    if not _has_fields(
+        randomization,
+        ("brightness_scale", "contrast_scale", "gamma", "saturation_scale"),
+    ):
+        return base, {}
+
+    updates: dict[str, Any] = {}
+    brightness = _sample_range_like(
+        randomization.brightness_scale,
+        rng,
+        default=float(base.brightness_scale),
+    )
+    if randomization.brightness_scale is not None:
+        updates["brightness_scale"] = brightness
+    contrast = _sample_range_like(
+        randomization.contrast_scale,
+        rng,
+        default=float(base.contrast_scale),
+    )
+    if randomization.contrast_scale is not None:
+        updates["contrast_scale"] = contrast
+    gamma = _sample_range_like(
+        randomization.gamma,
+        rng,
+        default=float(base.gamma),
+    )
+    if randomization.gamma is not None:
+        updates["gamma"] = gamma
+    saturation = _sample_range_like(
+        randomization.saturation_scale,
+        rng,
+        default=float(base.saturation_scale),
+    )
+    if randomization.saturation_scale is not None:
+        updates["saturation_scale"] = saturation
+
+    sampled = base.model_copy(
+        update={
+            "brightness_scale": brightness,
+            "contrast_scale": contrast,
+            "gamma": gamma,
+            "saturation_scale": saturation,
+        }
+    )
+    return sampled, updates
+
+
 def _sample_motion(
     base: MotionGeneratorConfig,
     rng: np.random.Generator,
@@ -956,6 +1013,12 @@ def sample_episode(
     scene = scene.model_copy(
         update={"tool": scene.tool.model_copy(update={"visual_overrides": sampled_visual})}
     )
+    sampled_tone, tone_record = _sample_tone_augmentation(
+        scene.tone_augmentation,
+        randomization.tone_augmentation,
+        _named_subrng(seed, "tone_augmentation"),
+    )
+    scene = scene.model_copy(update={"tone_augmentation": sampled_tone})
 
     motion, _ = _sample_motion(
         motion,
@@ -973,6 +1036,7 @@ def sample_episode(
             camera=camera_record,
             lighting=lighting_record,
             visual_tint=visual_record,
+            tone_augmentation=tone_record,
         ),
     )
 

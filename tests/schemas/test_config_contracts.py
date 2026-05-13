@@ -19,6 +19,7 @@ def test_scene_yaml_loads_and_has_target_volumes() -> None:
     assert scene_cfg.tool.tool_id == "dejavu_forceps"
     assert scene_cfg.tissue_scene_path is not None
     assert (REPO_ROOT / scene_cfg.tissue_scene_path).is_file()
+    assert scene_cfg.tone_augmentation.is_identity()
     assert len(scene_cfg.target_volumes) >= 1
     assert scene_cfg.target_volumes[0].label == "general"
 
@@ -103,6 +104,19 @@ def test_extra_fields_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         load_motion_config(motion_bad)
+
+
+def test_scene_rejects_invalid_tone_augmentation(tmp_path: Path) -> None:
+    payload = yaml.safe_load(SCENE_CONFIG_PATH.read_text(encoding="utf-8"))
+    payload["tone_augmentation"] = {
+        "gamma": 0.0,
+        "brightness_scale": 1.0,
+    }
+    scene_bad = tmp_path / "tmp_scene_invalid_tone_augmentation.yaml"
+    scene_bad.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        load_scene_config(scene_bad)
 
 
 def test_loads_motion_config_rejects_invalid_range_ordering(tmp_path: Path) -> None:

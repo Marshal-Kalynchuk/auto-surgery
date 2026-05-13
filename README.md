@@ -123,6 +123,33 @@ PY
    - Compare source and derived datasets: frame count parity + aligned `frame_index`.
    - Keep commanded/executed action parity for the same joint key set (`j0` at Stage-0).
 
+## Replay determinism notes
+
+`SurgicalMotionGenerator` relies on three named RNG streams created from a single
+seed:
+
+- `_rng_targets`
+- `_rng_noise`
+- `_rng_blend`
+
+All three streams are derived from `motion_config.seed` in `Sequencer` via `np.random.SeedSequence`.
+When the same seed, scene config, and motion config are used, reseeding and replaying an episode should
+reproduce the same primitives, target draws, and interpolation noise path, including command-level
+trajectory commands written to `control_commands.parquet`.
+
+To verify bit-stable replays manually:
+
+1. Set a fixed motion seed in the episode spec / motion config.
+2. Run the same capture/run twice with the same seed and scene.
+3. Compare trajectory artifacts byte-for-byte, for example:
+
+```bash
+sha256sum episode_00/control_commands.parquet
+sha256sum episode_00_repeat/control_commands.parquet
+```
+
+The checksums should match when determinism is preserved.
+
 ## CLI entrypoints (single surface)
 
 Preferred usage routes all scripts through `auto-surgery`:

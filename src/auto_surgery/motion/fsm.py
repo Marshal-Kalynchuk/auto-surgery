@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from auto_surgery.schemas.commands import Pose
 from auto_surgery.schemas.results import StepResult
-from auto_surgery.motion.primitives import Approach, Dwell, Probe, Primitive, _probe_retract_time
+from auto_surgery.motion.primitives import Reach, Hold, Primitive
 from auto_surgery.motion.sequencer import _Sequencer
 
 
@@ -19,8 +19,6 @@ class _ActivePrimitive:
     duration_s: float
     elapsed_s: float = 0.0
     contact_was_in: bool = False
-    in_post_contact_phase: bool = False
-    post_contact_started_at_s: float = 0.0
 
 
 _REALISED_RECORD = tuple[Primitive, int, int, bool]
@@ -43,7 +41,7 @@ class _Fsm:
             self._record_finished_if_any(last_step.sim_step_index)
             next_primitive = self._sequencer.next_primitive(last_step, last_jaw)
             if next_primitive is None:
-                next_primitive = Dwell(duration_s=1e9, jaw_target_start=None, jaw_target_end=None)
+                next_primitive = Hold(duration_s=1e9, jaw_target_start=None, jaw_target_end=None)
             self._active = _ActivePrimitive(
                 primitive=next_primitive,
                 started_at_tick=last_step.sim_step_index,
@@ -66,19 +64,7 @@ class _Fsm:
         active.contact_was_in = contact_now
 
         match active.primitive:
-            case Probe() if active.in_post_contact_phase:
-                elapsed_since_contact = active.elapsed_s - active.post_contact_started_at_s
-                hold = float(active.primitive.hold_after_contact_s)
-                retract_time = _probe_retract_time(
-                    active.primitive.retract_distance_m,
-                    peak_retract_speed_m_per_s=float(active.primitive.retract_peak_speed_m_per_s),
-                )
-                return elapsed_since_contact >= hold + retract_time
-            case Probe() if not active.in_post_contact_phase and contact_rising:
-                active.in_post_contact_phase = True
-                active.post_contact_started_at_s = active.elapsed_s
-                return False
-            case Approach() if active.primitive.end_on_contact and contact_rising:
+            case Reach() if active.primitive.end_on_contact and contact_rising:
                 self._last_finished_by_contact = True
                 return True
             case _:

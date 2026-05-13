@@ -6,7 +6,17 @@ from collections.abc import Callable
 from typing import Any
 
 from auto_surgery.env.protocol import Environment
-from auto_surgery.schemas.commands import ControlMode, Pose, Quaternion, RobotCommand, Twist, Vec3
+from auto_surgery.env.sofa_scenes.forceps_assets import _twist_camera_to_scene
+from auto_surgery.schemas.commands import (
+    ControlFrame,
+    ControlMode,
+    Pose,
+    Quaternion,
+    RobotCommand,
+    SafetyMetadata,
+    Twist,
+    Vec3,
+)
 from auto_surgery.schemas.manifests import EnvConfig, SceneConfig
 from auto_surgery.schemas.results import StepResult
 from auto_surgery.schemas.scene import SceneGraph
@@ -89,6 +99,7 @@ class SofaEnvironment(Environment):
         self._frame_rate_hz = 30.0
         self._frame_decimation = max(1, round(self._control_rate_hz / self._frame_rate_hz))
         self._latest_step_sensors: SensorBundle | None = None
+        self._workspace_envelope = scene_config.tool.workspace_envelope if scene_config is not None else None
 
     def _resolve_from_scene_config(
         self,
@@ -254,6 +265,78 @@ class SofaEnvironment(Environment):
             return True, "stale_cycle_id"
         if not command.enable:
             return True, "disabled"
+        if (
+            command.control_mode != ControlMode.CARTESIAN_TWIST
+            or command.cartesian_twist is None
+            or command.frame != ControlFrame.CAMERA
+            or self._workspace_envelope is None
+        ):
+            return False, None
+
+        last_sensors = self._latest_step_sensors
+        if last_sensors is None:
+            last_sensors = self._backend.get_sensors()
+        tip_pose_scene = last_sensors.tool.pose
+        tip_linear_velocity = _twist_camera_to_scene(command.cartesian_twist, self._camera_pose["pose"])
+        dt = self._dt()
+        tip_next_scene = Vec3(
+            x=float(tip_pose_scene.position.x) + float(tip_linear_velocity[0]) * dt,
+            y=float(tip_pose_scene.position.y) + float(tip_linear_velocity[1]) * dt,
+            z=float(tip_pose_scene.position.z) + float(tip_linear_velocity[2]) * dt,
+        )
+
+        distance_next = float(
+            self._workspace_envelope.signed_distance_to_envelope(tip_next_scene)
+        )
+        near_boundary = 0.5 * float(self._workspace_envelope.outer_margin_m)
+
+        if distance_next < 0.0:
+            command.safety = SafetyMetadata(
+                clamped_linear=False,
+                clamped_angular=False,
+                biased_linear=False,
+                biased_angular=False,
+                scaled_by=None,
+                signed_distance_to_envelope_m=distance_next,
+                signed_distance_to_surface_m=None,
+            )
+            return True, "tip_outside_workspace_envelope"
+
+        if 0.0 <= distance_next < near_boundary and near_boundary > 0.0:
+            current_distance = float(
+                self._workspace_envelope.signed_distance_to_envelope(tip_pose_scene.position)
+            )
+            # Scale only when moving toward the boundary (distance decreases with time).
+            if distance_next < current_distance and current_distance > near_boundary:
+                scale = (near_boundary - current_distance) / (distance_next - current_distance)
+                scale = max(0.0, min(1.0, float(scale)))
+                if scale < 1.0:
+                    scaled_linear = Vec3(
+                        x=float(command.cartesian_twist.linear.x) * scale,
+                        y=float(command.cartesian_twist.linear.y) * scale,
+                        z=float(command.cartesian_twist.linear.z) * scale,
+                    )
+                    command.cartesian_twist = command.cartesian_twist.model_copy(
+                        update={"linear": scaled_linear}
+                    )
+                    scaled_tip_next_scene = Vec3(
+                        x=float(tip_pose_scene.position.x) + float(tip_linear_velocity[0] * scale) * dt,
+                        y=float(tip_pose_scene.position.y) + float(tip_linear_velocity[1] * scale) * dt,
+                        z=float(tip_pose_scene.position.z) + float(tip_linear_velocity[2] * scale) * dt,
+                    )
+                    command.safety = SafetyMetadata(
+                        clamped_linear=True,
+                        clamped_angular=False,
+                        biased_linear=False,
+                        biased_angular=False,
+                        scaled_by=scale,
+                        signed_distance_to_envelope_m=float(
+                            self._workspace_envelope.signed_distance_to_envelope(scaled_tip_next_scene)
+                        ),
+                        signed_distance_to_surface_m=None,
+                    )
+                    return False, None
+
         return False, None
 
     def _safety(self, command: RobotCommand, blocked: bool, reason: str | None) -> SafetyStatus:
@@ -274,6 +357,7 @@ class SofaEnvironment(Environment):
         self._control_rate_hz = float(config.control_rate_hz)
         self._frame_rate_hz = float(config.frame_rate_hz)
         self._frame_decimation = max(1, round(self._control_rate_hz / self._frame_rate_hz))
+        self._workspace_envelope = config.scene.tool.workspace_envelope
         self._camera_pose["pose"] = config.scene.camera_extrinsics_scene.model_copy(deep=True)
         self._apply_backend_control_rate()
         self._apply_initial_jaw(config.scene.tool.initial_jaw)

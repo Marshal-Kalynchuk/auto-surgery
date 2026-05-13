@@ -11,6 +11,7 @@ from auto_surgery.schemas.randomization import (
     EpisodeRandomizationConfig,
     Range,
     SampleRecord,
+    ToneAugmentationRandomization,
     TissueMaterialRandomization,
 )
 
@@ -80,3 +81,27 @@ def test_sample_episode_axes_use_independent_named_rng_substreams() -> None:
     assert both_spec.scene.camera_intrinsics == camera_only_spec.scene.camera_intrinsics
     assert both_spec.sample_record.tissue_material == material_only_spec.sample_record.tissue_material
     assert both_spec.sample_record.camera == camera_only_spec.sample_record.camera
+
+
+def test_sample_episode_tone_augmentation_axis_is_sampled_and_recorded() -> None:
+    scene = load_scene_config("configs/scenes/dejavu_brain.yaml")
+    motion = load_motion_config("configs/motion/default.yaml")
+    randomization = EpisodeRandomizationConfig(
+        tone_augmentation=ToneAugmentationRandomization(
+            brightness_scale=Range(low=1.15, high=1.15),
+            contrast_scale=Range(low=0.9, high=0.9),
+            gamma=Range(low=2.0, high=2.0),
+            saturation_scale=Range(low=1.1, high=1.1),
+        )
+    )
+
+    spec = sample_episode(scene, motion, randomization, episode_seed=314)
+
+    assert spec.scene.tone_augmentation.brightness_scale == 1.15
+    assert spec.scene.tone_augmentation.contrast_scale == 0.9
+    assert spec.scene.tone_augmentation.gamma == 2.0
+    assert spec.scene.tone_augmentation.saturation_scale == 1.1
+    assert spec.sample_record.tone_augmentation["brightness_scale"] == 1.15
+    assert spec.sample_record.tone_augmentation["contrast_scale"] == 0.9
+    assert spec.sample_record.tone_augmentation["gamma"] == 2.0
+    assert spec.sample_record.tone_augmentation["saturation_scale"] == 1.1
