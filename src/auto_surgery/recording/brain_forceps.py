@@ -526,6 +526,10 @@ def _run_one_episode(
         )
         episode_spec = episode_spec.model_copy(update={"scene": scene})
 
+    episode_spec = episode_spec.model_copy(
+        update={"motion": episode_spec.motion.with_default_motion_shaping(scene.scene_id)},
+    )
+
     _write_episode_spec(
         output_path=episode_dir / "episode_spec.json",
         spec=episode_spec,

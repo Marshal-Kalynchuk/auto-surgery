@@ -25,9 +25,9 @@ class ToolState(BaseModel):
 
     The shaft ``MechanicalObject`` (Rigid3d) is integrated by SOFA in scene
     coordinates and is read back unchanged by the forceps observer, so both
-    ``pose`` and ``twist`` are in scene frame. Action commands are still
-    carried in camera frame (``ControlFrame.CAMERA``) and are converted back
-    to scene frame by the tool action applier before writing to the MO.
+    ``pose`` and ``twist`` are in scene frame. Cartesian actions use
+    ``ControlMode.CARTESIAN_POSE`` with ``frame=ControlFrame.SCENE`` (tip target
+    pose); the applier servoes the shaft toward that tip pose.
     """
 
     model_config = {"extra": "forbid"}

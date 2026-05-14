@@ -6,7 +6,8 @@ import math
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+import numpy as np
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from auto_surgery.env.sofa_scenes.poc_scene import (
     camera_pose_scene_from_look_mm,
@@ -204,17 +205,43 @@ class WorkspaceEnvelope(BaseModel):
 
 
 class SceneGeometryEnvelope(WorkspaceEnvelope):
-    """Envelope backed by scene-geometry signed-distance queries."""
+    """Workspace envelope as an axis-aligned box around tissue surface mesh bounds.
+
+    ``signed_distance_to_envelope`` returns the minimum margin to the **inflated**
+    axis-aligned bounding box of the surface mesh (``outer_margin_mm`` on each
+    side). Positive values are inside that box; negative values are outside.
+
+    This does **not** exclude the interior of the brain mesh; collision-driven
+    contact and FEM coupling remain separate concerns.
+    """
 
     model_config = {"extra": "forbid"}
 
     outer_margin_mm: float = Field(gt=0.0)
     inner_margin_mm: float = Field(ge=0.0)
     no_go_regions: list[dict[str, Any]] = Field(default_factory=list)
+    surface_mesh_path: Path | None = None
+    _mesh_geometry: object | None = PrivateAttr(default=None)
 
     def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
-        del p_scene  # Placeholder for geometry integration.
-        return 0.0
+        if self.surface_mesh_path is None:
+            return 0.0
+        if self._mesh_geometry is None:
+            from auto_surgery.env.scene_geometry import MeshSceneGeometry
+
+            self._mesh_geometry = MeshSceneGeometry(str(self.surface_mesh_path))
+        bmin, bmax = self._mesh_geometry.bounds()  # type: ignore[union-attr]
+        margin = float(self.outer_margin_mm)
+        bmin_arr = np.array(
+            (float(bmin.x) - margin, float(bmin.y) - margin, float(bmin.z) - margin),
+            dtype=float,
+        )
+        bmax_arr = np.array(
+            (float(bmax.x) + margin, float(bmax.y) + margin, float(bmax.z) + margin),
+            dtype=float,
+        )
+        p = np.array((float(p_scene.x), float(p_scene.y), float(p_scene.z)), dtype=float)
+        return float(np.min(np.minimum(p - bmin_arr, bmax_arr - p)))
 
 
 class SphereEnvelope(WorkspaceEnvelope):
@@ -235,7 +262,163 @@ class SphereEnvelope(WorkspaceEnvelope):
         return center_distance - self.radius_mm
 
 
-WorkspaceEnvelope = SceneGeometryEnvelope | SphereEnvelope
+class CameraFrustumEnvelope(WorkspaceEnvelope):
+    """Workspace envelope = camera view frustum bounded by [near, far] depth.
+
+    ``signed_distance_to_envelope(p_scene)`` returns the minimum margin (in
+    scene mm) to the six frustum half-spaces:
+
+    * near plane (``z_cam = near_depth_mm``)
+    * far plane (``z_cam = far_depth_mm``)
+    * four lateral planes from the pinhole intrinsics, optionally shrunk by
+      ``lateral_margin_fraction`` of the half image extents (e.g. 0.05 leaves
+      a 5% margin around the image edges to keep the tip clearly visible).
+
+    Lateral pixel distances are converted back to scene mm at the projected
+    depth so the result is a single signed distance in scene units, ready to
+    intersect with other envelopes via ``CompositeEnvelope``.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    camera_extrinsics_scene: Pose
+    camera_intrinsics: CameraIntrinsics
+    near_depth_mm: float = Field(default=5.0, gt=0.0)
+    far_depth_mm: float = Field(default=300.0, gt=0.0)
+    lateral_margin_fraction: float = Field(default=0.05, ge=0.0, lt=0.5)
+    outer_margin_mm: float = Field(default=1.0, gt=0.0)
+    inner_margin_mm: float = Field(default=0.0, ge=0.0)
+    _camera_basis_cache: object | None = PrivateAttr(default=None)
+
+    def _camera_basis(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return ``(R_scene_from_cam, cam_origin_scene)`` cached after first call.
+
+        ``R_scene_from_cam`` columns are ``(right, down, forward)`` in scene
+        frame, matching the OpenCV-style basis SOFA's ``InteractiveCamera``
+        builds from ``position`` and ``lookAt`` (see ``poc_scene._ortho_basis``).
+        """
+
+        cached = self._camera_basis_cache
+        if isinstance(cached, tuple):
+            return cached
+        q = self.camera_extrinsics_scene.rotation
+        qx, qy, qz, qw = float(q.x), float(q.y), float(q.z), float(q.w)
+        norm_sq = qx * qx + qy * qy + qz * qz + qw * qw
+        if norm_sq <= 1.0e-30:
+            rotation = np.eye(3, dtype=float)
+        else:
+            inv = 1.0 / math.sqrt(norm_sq)
+            qx *= inv
+            qy *= inv
+            qz *= inv
+            qw *= inv
+            xx = qx * qx
+            yy = qy * qy
+            zz = qz * qz
+            xy = qx * qy
+            xz = qx * qz
+            yz = qy * qz
+            wx = qw * qx
+            wy = qw * qy
+            wz = qw * qz
+            rotation = np.array(
+                [
+                    [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+                    [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+                    [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+                ],
+                dtype=float,
+            )
+        origin = np.array(
+            (
+                float(self.camera_extrinsics_scene.position.x),
+                float(self.camera_extrinsics_scene.position.y),
+                float(self.camera_extrinsics_scene.position.z),
+            ),
+            dtype=float,
+        )
+        self._camera_basis_cache = (rotation, origin)
+        return rotation, origin
+
+    def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
+        rotation, origin = self._camera_basis()
+        scene_offset = np.array(
+            (float(p_scene.x) - origin[0], float(p_scene.y) - origin[1], float(p_scene.z) - origin[2]),
+            dtype=float,
+        )
+        cam_point = rotation.T @ scene_offset
+        x_cam = float(cam_point[0])
+        y_cam = float(cam_point[1])
+        z_cam = float(cam_point[2])
+        if z_cam <= 0.0:
+            return float(z_cam - float(self.near_depth_mm))
+
+        depth_to_near = z_cam - float(self.near_depth_mm)
+        depth_to_far = float(self.far_depth_mm) - z_cam
+
+        intr = self.camera_intrinsics
+        fx = float(intr.fx)
+        fy = float(intr.fy)
+        cx = float(intr.cx)
+        cy = float(intr.cy)
+        half_w_px = max(cx, float(intr.width) - cx)
+        half_h_px = max(cy, float(intr.height) - cy)
+        margin = float(self.lateral_margin_fraction)
+        half_w_px *= (1.0 - margin)
+        half_h_px *= (1.0 - margin)
+
+        half_w_mm = z_cam * half_w_px / fx if fx > 0.0 else float("inf")
+        half_h_mm = z_cam * half_h_px / fy if fy > 0.0 else float("inf")
+        right_dist = half_w_mm - abs(x_cam)
+        down_dist = half_h_mm - abs(y_cam)
+
+        return float(min(depth_to_near, depth_to_far, right_dist, down_dist))
+
+
+class CompositeEnvelope(WorkspaceEnvelope):
+    """Workspace envelope = intersection of a list of leaf envelopes.
+
+    The signed distance is the minimum of the children's signed distances,
+    so a point is inside the composite only when it is inside every child.
+
+    ``outer_margin_mm`` and ``inner_margin_mm`` are exposed at the composite
+    level for callers (sequencer, orchestrator) that use them as gating
+    thresholds; they default to the max of the leaves so the composite stays
+    at least as strict as any child.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    envelopes: list["SceneGeometryEnvelope | SphereEnvelope | CameraFrustumEnvelope"] = Field(
+        min_length=1,
+    )
+    outer_margin_mm: float = Field(default=0.0, ge=0.0)
+    inner_margin_mm: float = Field(default=0.0, ge=0.0)
+
+    @model_validator(mode="after")
+    def _aggregate_margins(self) -> "CompositeEnvelope":
+        if self.outer_margin_mm == 0.0:
+            outer = 0.0
+            for env in self.envelopes:
+                outer = max(outer, float(getattr(env, "outer_margin_mm", 0.0)))
+            object.__setattr__(self, "outer_margin_mm", outer)
+        if self.inner_margin_mm == 0.0:
+            inner = 0.0
+            for env in self.envelopes:
+                inner = max(inner, float(getattr(env, "inner_margin_mm", 0.0)))
+            object.__setattr__(self, "inner_margin_mm", inner)
+        return self
+
+    def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
+        distances = [
+            float(env.signed_distance_to_envelope(p_scene)) for env in self.envelopes
+        ]
+        return float(min(distances)) if distances else 0.0
+
+
+WorkspaceEnvelope = (
+    SceneGeometryEnvelope | SphereEnvelope | CameraFrustumEnvelope | CompositeEnvelope
+)
 
 
 class OrientationBias(BaseModel):
@@ -247,6 +430,23 @@ class OrientationBias(BaseModel):
     surface_normal_blend: float = Field(default=0.7, ge=0.0, le=1.0)
     gain: float = Field(default=0.0, ge=0.0)
     deadband_rad: float = Field(default=0.0, ge=0.0)
+    approach_axis_scene: Vec3 | None = Field(
+        default=None,
+        description=(
+            "Optional fixed insertion-to-tip direction in scene frame. When set, the "
+            "sequencer aligns the tool's ``forward_axis_local`` with this vector for "
+            "every primitive, so the shaft body stays oriented from a consistent "
+            "off-screen direction across the whole episode."
+        ),
+    )
+    approach_axis_jitter_rad: float = Field(
+        default=0.05,
+        ge=0.0,
+        description=(
+            "Per-primitive jitter applied around ``approach_axis_scene`` when locked. "
+            "Kept small so the shaft direction stays visually consistent."
+        ),
+    )
 
 
 class TargetVolume(BaseModel):
@@ -389,3 +589,138 @@ class SceneConfig(BaseModel):
 
         data["camera_intrinsics"] = merged_ci
         return data
+
+    @model_validator(mode="after")
+    def _auto_build_workspace_envelope(self) -> "SceneConfig":
+        """Auto-populate ``tool.workspace_envelope`` and ``orientation_bias.approach_axis_scene``.
+
+        Without this, the sequencer is free to sample tip targets anywhere inside
+        a default 45 mm-radius sphere around origin, and the orchestrator has
+        nothing to block on. The workspace envelope built here intersects:
+
+        * the inflated **tissue surface mesh AABB** (so the tip stays near the
+          brain), and
+        * the **camera frustum** (so the tip stays inside the captured image
+          regardless of how the AABB extends past the frustum at near depths).
+
+        The orientation bias is given a fixed ``approach_axis_scene`` derived
+        from the camera view direction so the shaft body comes from a stable
+        off-screen insertion direction rather than re-orienting per primitive.
+        """
+
+        existing_envelope = self.tool.workspace_envelope
+        explicit_approach = self.tool.orientation_bias.approach_axis_scene
+        tool_update: dict[str, Any] = {}
+
+        if existing_envelope is None:
+            new_envelope = self._build_auto_workspace_envelope()
+            if new_envelope is not None:
+                tool_update["workspace_envelope"] = new_envelope
+
+        if explicit_approach is None:
+            new_axis = self._derive_default_approach_axis()
+            if new_axis is not None:
+                tool_update["orientation_bias"] = self.tool.orientation_bias.model_copy(
+                    update={"approach_axis_scene": new_axis},
+                )
+
+        if tool_update:
+            self.tool = self.tool.model_copy(update=tool_update)
+        return self
+
+    def _build_auto_workspace_envelope(self) -> "WorkspaceEnvelope | None":
+        envelopes: list[WorkspaceEnvelope] = []
+
+        mesh_envelope = self._build_tissue_aabb_envelope()
+        if mesh_envelope is not None:
+            envelopes.append(mesh_envelope)
+
+        frustum_envelope = self._build_camera_frustum_envelope()
+        if frustum_envelope is not None:
+            envelopes.append(frustum_envelope)
+
+        if not envelopes:
+            return None
+        if len(envelopes) == 1:
+            return envelopes[0]
+        return CompositeEnvelope(envelopes=envelopes)
+
+    def _build_tissue_aabb_envelope(self) -> "SceneGeometryEnvelope | None":
+        if self.tissue_assets is None:
+            return None
+        try:
+            from auto_surgery.env.sofa_scenes.dejavu_paths import resolve_dejavu_root
+
+            root = resolve_dejavu_root()
+        except RuntimeError:
+            return None
+        surface = (root / self.tissue_assets.surface_mesh_relative_path).resolve()
+        if not surface.is_file():
+            return None
+        return SceneGeometryEnvelope(
+            surface_mesh_path=surface,
+            outer_margin_mm=5.0,
+            inner_margin_mm=2.0,
+        )
+
+    def _build_camera_frustum_envelope(self) -> "CameraFrustumEnvelope | None":
+        intrinsics = self.camera_intrinsics
+        if intrinsics.width <= 0 or intrinsics.height <= 0:
+            return None
+        if intrinsics.fx <= 0.0 or intrinsics.fy <= 0.0:
+            return None
+        if self._camera_extrinsics_are_identity():
+            return None
+        return CameraFrustumEnvelope(
+            camera_extrinsics_scene=self.camera_extrinsics_scene,
+            camera_intrinsics=intrinsics,
+            near_depth_mm=5.0,
+            far_depth_mm=300.0,
+            lateral_margin_fraction=0.08,
+            outer_margin_mm=1.0,
+            inner_margin_mm=2.0,
+        )
+
+    def _camera_extrinsics_are_identity(self) -> bool:
+        pose = self.camera_extrinsics_scene
+        position = pose.position
+        rotation = pose.rotation
+        return (
+            float(position.x) == 0.0
+            and float(position.y) == 0.0
+            and float(position.z) == 0.0
+            and float(rotation.w) == 1.0
+            and float(rotation.x) == 0.0
+            and float(rotation.y) == 0.0
+            and float(rotation.z) == 0.0
+        )
+
+    def _derive_default_approach_axis(self) -> Vec3 | None:
+        """Default approach axis = camera view dir tilted ~30° toward camera-down.
+
+        This puts the insertion port "above" the image (in screen-up direction)
+        for typical surgical viewpoints where world-up maps to screen-up. The
+        shaft body therefore extends from the tip backward toward the top of
+        the image, off-screen.
+        """
+
+        if self._camera_extrinsics_are_identity():
+            return None
+        try:
+            rotation, _ = CameraFrustumEnvelope(
+                camera_extrinsics_scene=self.camera_extrinsics_scene,
+                camera_intrinsics=self.camera_intrinsics,
+            )._camera_basis()
+        except Exception:
+            return None
+        right = rotation[:, 0]
+        down = rotation[:, 1]
+        forward = rotation[:, 2]
+        del right
+        tilt = math.radians(30.0)
+        axis = math.cos(tilt) * forward + math.sin(tilt) * (-down)
+        norm = float(np.linalg.norm(axis))
+        if norm <= 1.0e-12:
+            return None
+        axis = axis / norm
+        return Vec3(x=float(axis[0]), y=float(axis[1]), z=float(axis[2]))

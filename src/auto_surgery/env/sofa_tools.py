@@ -10,11 +10,12 @@ from typing import Any
 from auto_surgery.env.sofa_scenes.forceps_assets import (
     DEFAULT_TOOL_TIP_OFFSET_LOCAL,
     _clasper_visual_transform,
-    _shaft_origin_twist_from_tip_twist,
-    _twist_camera_to_scene,
     load_dejavu_forceps_defaults,
+    shaft_pose_from_tip_target,
 )
+from auto_surgery.motion.frames import pose_compose, pose_inverse, pose_log
 from auto_surgery.schemas.commands import (
+    ControlFrame,
     ControlMode,
     Pose,
     Quaternion,
@@ -36,6 +37,14 @@ _ZERO_TWIST = Twist(
 )
 _ZERO_VEC = Vec3(x=0.0, y=0.0, z=0.0)
 _ZERO_TWIST_TUPLE: tuple[float, float, float, float, float, float] = (0.0,) * 6
+
+
+class UnsupportedControlModeError(RuntimeError):
+    """Raised when a legacy camera-frame twist command is sent with motion enabled.
+
+    The SOFA forceps applier expects ``ControlMode.CARTESIAN_POSE`` with
+    ``frame=ControlFrame.SCENE``; see ``docs/UNITS.md``.
+    """
 
 
 def _to_list(value: Any) -> list[float]:
@@ -358,7 +367,6 @@ _SHAFT_DOF_NAMES = (
     "forcepsMo",
 )
 _SHAFT_VISUAL_NAMES = (
-    "ShaftVisual",
     "shaftVisual",
     "shaft_visual",
     "forcepsVisual",
@@ -367,21 +375,19 @@ _SHAFT_VISUAL_NAMES = (
     "ForcepsBody",
 )
 _LEFT_CLASPER_NAMES = (
-    "ClasperLeft",
-    "clasperLeft",
-    "ClasperLeftVisual",
     "clasperLeftVisual",
+    "ClasperLeftVisual",
     "ForcepsClasperLeft",
     "forcepsClasperLeft",
 )
 _RIGHT_CLASPER_NAMES = (
-    "ClasperRight",
-    "clasperRight",
-    "ClasperRightVisual",
     "clasperRightVisual",
+    "ClasperRightVisual",
     "ForcepsClasperRight",
     "forcepsClasperRight",
 )
+_LEFT_CLASPER_WRAPPER_NAMES = ("ClasperLeft", "clasperLeft")
+_RIGHT_CLASPER_WRAPPER_NAMES = ("ClasperRight", "clasperRight")
 _SHAFT_COLLISION_NODE_NAMES = (
     "ShaftCollision",
     "shaftCollision",
@@ -427,12 +433,12 @@ def _discover_forceps_handles(scene: Any) -> _DiscoveredForcepsHandles:
     left_clasper = _resolve_visual_handle(
         shaft_node or forceps_node,
         names=_LEFT_CLASPER_NAMES,
-        intermediate_node_names=_LEFT_CLASPER_NAMES,
+        intermediate_node_names=_LEFT_CLASPER_WRAPPER_NAMES,
     )
     right_clasper = _resolve_visual_handle(
         shaft_node or forceps_node,
         names=_RIGHT_CLASPER_NAMES,
-        intermediate_node_names=_RIGHT_CLASPER_NAMES,
+        intermediate_node_names=_RIGHT_CLASPER_WRAPPER_NAMES,
     )
     return _DiscoveredForcepsHandles(
         forceps_node=forceps_node,
@@ -495,6 +501,8 @@ def build_forceps_velocity_applier(
             "clamped_angular": False,
             "scaled_linear": None,
             "scaled_angular": None,
+            "pose_error_norm_mm": None,
+            "pose_error_norm_rad": None,
         }
 
     def _resolve_motion_shaping(action: RobotCommand) -> MotionShaping | None:
@@ -504,7 +512,7 @@ def build_forceps_velocity_applier(
         return raw if isinstance(raw, MotionShaping) else state["motion_shaping"]
 
     def _norm3(vec: tuple[float, float, float]) -> float:
-        return math.sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2])
+        return math.hypot(vec[0], vec[1], vec[2])
 
     def _limit_magnitude_channel(
         values: tuple[float, float, float],
@@ -556,9 +564,6 @@ def build_forceps_velocity_applier(
                 )
         return clamped
 
-    def _is_finite_twist(values: tuple[float, float, float, float, float, float]) -> bool:
-        return all(math.isfinite(value) for value in values)
-
     def _refresh_handles(scene: Any) -> None:
         scene_id = id(scene) if scene is not None else None
         if scene_id is not None and state["scene_id"] != scene_id:
@@ -589,27 +594,24 @@ def build_forceps_velocity_applier(
                 hinge_axis_local=hinge_axis_local,
             )
 
-    def _resolve_camera_pose(scene: Any) -> Pose:
-        if camera_pose_provider is not None:
-            try:
-                pose = camera_pose_provider()
-            except Exception:
-                pose = None
-            if isinstance(pose, Pose):
-                return pose
-        return _read_camera_pose(scene)
-
     def _command_disengaged(action: RobotCommand) -> bool:
         return (
-            action.control_mode != ControlMode.CARTESIAN_TWIST
+            action.control_mode != ControlMode.CARTESIAN_POSE
             or not action.enable
-            or action.cartesian_twist is None
+            or action.cartesian_pose_target is None
+            or action.frame != ControlFrame.SCENE
         )
 
     def _apply_action(scene: Any, action: RobotCommand) -> None:
         _refresh_handles(scene)
         if action.tool_jaw_target is not None:
             jaw_ref["jaw"] = float(action.tool_jaw_target)
+
+        if action.control_mode == ControlMode.CARTESIAN_TWIST and action.enable:
+            raise UnsupportedControlModeError(
+                "CARTESIAN_TWIST is no longer accepted by the forceps applier when enable=True; "
+                "use CARTESIAN_POSE with frame=SCENE (see docs/UNITS.md)."
+            )
 
         if _command_disengaged(action):
             dof_key = _dof_key(state["dof"])
@@ -623,37 +625,43 @@ def build_forceps_velocity_applier(
             _apply_claspers()
             return
 
-        scene_pose = _resolve_camera_pose(scene)
-        current_shaping = _resolve_motion_shaping(action)
-        camera_twist = action.cartesian_twist
-        scene_twist = _twist_camera_to_scene(camera_twist, scene_pose)
-        shaft_twist = _shaft_origin_twist_from_tip_twist(
-            scene_twist,
-            _read_pose_from_handle(state["dof"]),
-            tool_tip_offset_local,
-        )
-        if not _is_finite_twist(shaft_twist):
-            dof_key = _dof_key(state["dof"])
-            state["safety_feedback_by_dof"][dof_key] = _feedback_record()
-            if state["dof"] is not None:
-                state["last_applied_twist_by_dof"][dof_key] = _ZERO_TWIST_TUPLE
-                state["last_timestamp_ns_by_dof"][dof_key] = int(action.timestamp_ns)
-                _write_velocity_to_handle(state["dof"], _ZERO_TWIST_TUPLE)
-            _apply_action.safety_feedback = state["safety_feedback_by_dof"]
-            _apply_action.last_applied_twist = state["last_applied_twist_by_dof"]
-            _apply_claspers()
-            return
-
         dof_key = _dof_key(state["dof"])
-        last_applied_twist = state["last_applied_twist_by_dof"].get(
-            dof_key, _ZERO_TWIST_TUPLE
-        )
+        measured_shaft = _read_pose_from_handle(state["dof"])
+        tip_target = action.cartesian_pose_target
+        shaft_target = shaft_pose_from_tip_target(tip_target, measured_shaft, tool_tip_offset_local)
+        err_pose = pose_compose(pose_inverse(measured_shaft), shaft_target)
+        e_lin, e_ang = pose_log(err_pose)
+        err_mm = math.hypot(float(e_lin.x), float(e_lin.y), float(e_lin.z))
+        err_rad = math.hypot(float(e_ang.x), float(e_ang.y), float(e_ang.z))
+
+        last_applied_twist = state["last_applied_twist_by_dof"].get(dof_key, _ZERO_TWIST_TUPLE)
         previous_timestamp_ns = state["last_timestamp_ns_by_dof"].get(dof_key)
         dt_s = 0.0
         if previous_timestamp_ns is not None:
             dt_s = max(0.0, (int(action.timestamp_ns) - int(previous_timestamp_ns)) / 1e9)
 
         record = _feedback_record()
+        record["pose_error_norm_mm"] = err_mm
+        record["pose_error_norm_rad"] = err_rad
+
+        min_dt = 1e-6
+        if dt_s < min_dt or (err_mm < 1e-12 and err_rad < 1e-12):
+            v_lin = (0.0, 0.0, 0.0)
+            v_ang = (0.0, 0.0, 0.0)
+        else:
+            inv_dt = 1.0 / dt_s
+            v_lin = (
+                float(e_lin.x) * inv_dt,
+                float(e_lin.y) * inv_dt,
+                float(e_lin.z) * inv_dt,
+            )
+            v_ang = (
+                float(e_ang.x) * inv_dt,
+                float(e_ang.y) * inv_dt,
+                float(e_ang.z) * inv_dt,
+            )
+
+        current_shaping = _resolve_motion_shaping(action)
         max_linear_mm_s = float(current_shaping.max_linear_mm_s) if current_shaping else None
         max_angular_rad_s = float(current_shaping.max_angular_rad_s) if current_shaping else None
         max_linear_accel_mm_s2 = (
@@ -663,8 +671,19 @@ def build_forceps_velocity_applier(
             float(current_shaping.max_angular_accel_rad_s2) if current_shaping else None
         )
 
+        if not all(math.isfinite(v) for v in (*v_lin, *v_ang)):
+            state["safety_feedback_by_dof"][dof_key] = record
+            if state["dof"] is not None:
+                state["last_applied_twist_by_dof"][dof_key] = _ZERO_TWIST_TUPLE
+                state["last_timestamp_ns_by_dof"][dof_key] = int(action.timestamp_ns)
+                _write_velocity_to_handle(state["dof"], _ZERO_TWIST_TUPLE)
+            _apply_action.safety_feedback = state["safety_feedback_by_dof"]
+            _apply_action.last_applied_twist = state["last_applied_twist_by_dof"]
+            _apply_claspers()
+            return
+
         clamped_linear = _limit_magnitude_channel(
-            (shaft_twist[0], shaft_twist[1], shaft_twist[2]),
+            v_lin,
             (last_applied_twist[0], last_applied_twist[1], last_applied_twist[2]),
             max_speed=max_linear_mm_s,
             max_accel=max_linear_accel_mm_s2,
@@ -673,7 +692,7 @@ def build_forceps_velocity_applier(
             record=record,
         )
         clamped_angular = _limit_magnitude_channel(
-            (shaft_twist[3], shaft_twist[4], shaft_twist[5]),
+            v_ang,
             (last_applied_twist[3], last_applied_twist[4], last_applied_twist[5]),
             max_speed=max_angular_rad_s,
             max_accel=max_angular_accel_rad_s2,

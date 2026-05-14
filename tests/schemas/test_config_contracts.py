@@ -6,7 +6,17 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from auto_surgery.config import load_motion_config, load_scene_config
+from auto_surgery.config import load_motion_config, load_scene_config, load_scene_motion_shaping
+from auto_surgery.schemas.commands import Vec3
+from auto_surgery.schemas.motion import MotionGeneratorConfig, MotionShaping
+from auto_surgery.schemas.scene import (
+    SceneConfig,
+    SceneGeometryEnvelope,
+    SphereEnvelope,
+    TargetVolume,
+    TissueAssetSpec,
+    ToolSpec,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +32,46 @@ def test_scene_yaml_loads_and_has_target_volumes() -> None:
     assert scene_cfg.tone_augmentation.is_identity()
     assert len(scene_cfg.target_volumes) >= 1
     assert scene_cfg.target_volumes[0].label == "general"
+
+
+def test_load_scene_motion_shaping_loads_dejavu_brain_row() -> None:
+    shaping = load_scene_motion_shaping("dejavu_brain")
+    assert shaping.max_linear_mm_s == pytest.approx(45.0)
+    assert shaping.max_angular_rad_s == pytest.approx(1.20)
+    assert shaping.max_linear_accel_mm_s2 == pytest.approx(80.0)
+    assert shaping.max_angular_accel_rad_s2 == pytest.approx(2.20)
+
+
+def test_load_scene_motion_shaping_missing_scene_raises_keyerror() -> None:
+    with pytest.raises(KeyError):
+        load_scene_motion_shaping("nonexistent_scene")
+
+
+def test_motion_generator_with_default_motion_shaping_noop_when_shaping_set() -> None:
+    custom = MotionShaping(
+        max_linear_mm_s=1.0,
+        max_angular_rad_s=1.0,
+        max_linear_accel_mm_s2=1.0,
+        max_angular_accel_rad_s2=1.0,
+        bias_gain_max=0.0,
+        bias_ramp_distance_mm=1.0,
+        orientation_bias_gain=0.0,
+        orientation_deadband_rad=0.0,
+    )
+    cfg = load_motion_config(MOTION_CONFIG_PATH).model_copy(
+        update={"motion_shaping": custom, "motion_shaping_enabled": True},
+    )
+    out = cfg.with_default_motion_shaping("dejavu_brain")
+    assert out is cfg
+    assert out.motion_shaping is custom
+
+
+def test_motion_generator_with_default_motion_shaping_populates_when_none() -> None:
+    cfg = load_motion_config(MOTION_CONFIG_PATH).model_copy(update={"motion_shaping": None})
+    out = cfg.with_default_motion_shaping("dejavu_brain")
+    assert out.motion_shaping is not None
+    assert out.motion_shaping_enabled is True
+    assert out.motion_shaping.max_linear_mm_s == pytest.approx(45.0)
 
 
 def test_motion_yaml_loads_and_matches_expected_ranges() -> None:
@@ -194,3 +244,80 @@ def test_scene_loads_reject_legacy_scene_xml_path_only(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError):
         load_scene_config(bad_scene)
+
+
+def test_scene_config_auto_builds_workspace_envelope_when_tissue_assets_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTO_SURGERY_DEJAVU_ROOT", str(tmp_path))
+    mesh_rel = Path("scenes/brain/data/surface_full.obj")
+    mesh_file = tmp_path / mesh_rel
+    mesh_file.parent.mkdir(parents=True)
+    mesh_file.write_text("v 0 0 0\nv 10 0 0\nv 0 10 0\nf 1 2 3\n", encoding="utf-8")
+    tissue_scn = tmp_path / "tissue.scn"
+    tissue_scn.write_text("", encoding="utf-8")
+    vol = TargetVolume(
+        label="general",
+        center_scene=Vec3(x=0.0, y=0.0, z=0.0),
+        half_extents_scene=Vec3(x=1.0, y=1.0, z=1.0),
+    )
+    scene = SceneConfig(
+        tissue_scene_path=tissue_scn,
+        tissue_assets=TissueAssetSpec(surface_mesh_relative_path=str(mesh_rel)),
+        target_volumes=[vol],
+    )
+    assert scene.tool.workspace_envelope is not None
+    assert isinstance(scene.tool.workspace_envelope, SceneGeometryEnvelope)
+    assert scene.tool.workspace_envelope.surface_mesh_path == mesh_file.resolve()
+
+
+def test_scene_config_respects_explicit_workspace_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTO_SURGERY_DEJAVU_ROOT", str(tmp_path))
+    mesh_rel = Path("scenes/brain/data/surface_full.obj")
+    mesh_file = tmp_path / mesh_rel
+    mesh_file.parent.mkdir(parents=True)
+    mesh_file.write_text("v 0 0 0\nv 10 0 0\nv 0 10 0\nf 1 2 3\n", encoding="utf-8")
+    tissue_scn = tmp_path / "tissue.scn"
+    tissue_scn.write_text("", encoding="utf-8")
+    explicit = SphereEnvelope(
+        center_scene=Vec3(x=0.0, y=0.0, z=0.0),
+        radius_mm=5.0,
+        outer_margin_mm=1.0,
+        inner_margin_mm=0.5,
+    )
+    vol = TargetVolume(
+        label="general",
+        center_scene=Vec3(x=0.0, y=0.0, z=0.0),
+        half_extents_scene=Vec3(x=1.0, y=1.0, z=1.0),
+    )
+    scene = SceneConfig(
+        tissue_scene_path=tissue_scn,
+        tissue_assets=TissueAssetSpec(surface_mesh_relative_path=str(mesh_rel)),
+        tool=ToolSpec(workspace_envelope=explicit),
+        target_volumes=[vol],
+    )
+    assert scene.tool.workspace_envelope is explicit
+
+
+def test_scene_config_skips_envelope_when_dejavu_root_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AUTO_SURGERY_DEJAVU_ROOT", raising=False)
+    tissue_scn = tmp_path / "tissue.scn"
+    tissue_scn.write_text("", encoding="utf-8")
+    vol = TargetVolume(
+        label="general",
+        center_scene=Vec3(x=0.0, y=0.0, z=0.0),
+        half_extents_scene=Vec3(x=1.0, y=1.0, z=1.0),
+    )
+    scene = SceneConfig(
+        tissue_scene_path=tissue_scn,
+        tissue_assets=TissueAssetSpec(),
+        target_volumes=[vol],
+    )
+    assert scene.tool.workspace_envelope is None

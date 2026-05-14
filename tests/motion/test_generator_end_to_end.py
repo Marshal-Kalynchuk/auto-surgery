@@ -86,7 +86,7 @@ def test_next_command_requires_reset() -> None:
         generator.next_command(_step(sim_step_index=0, dt=0.0))
 
 
-def test_generator_emits_scripted_camera_twist_commands() -> None:
+def test_generator_emits_scripted_scene_pose_commands() -> None:
     generator = SurgicalMotionGenerator(_compact_config(), _scene())
     initial_step = _step(sim_step_index=0, dt=0.0)
     first_cmd = generator.reset(initial_step)
@@ -94,11 +94,11 @@ def test_generator_emits_scripted_camera_twist_commands() -> None:
 
     assert first_cmd.cycle_id == 0
     assert second_cmd.cycle_id == 1
-    assert first_cmd.control_mode == ControlMode.CARTESIAN_TWIST
-    assert first_cmd.frame == ControlFrame.CAMERA
+    assert first_cmd.control_mode == ControlMode.CARTESIAN_POSE
+    assert first_cmd.frame == ControlFrame.SCENE
     assert first_cmd.enable is True
     assert first_cmd.source == "scripted"
-    assert first_cmd.cartesian_twist is not None
+    assert first_cmd.cartesian_pose_target is not None
 
 
 def test_finalize_is_idempotent_and_records_realised_only_once() -> None:
@@ -124,7 +124,13 @@ def test_zero_length_plan_results_in_immediate_dwell() -> None:
     third = generator.next_command(_step(sim_step_index=2, dt=0.05))
 
     assert generator.realised_sequence == ()
-    assert second.cartesian_twist == third.cartesian_twist
+    assert second.cartesian_pose_target is not None
+    assert third.cartesian_pose_target is not None
+    assert (
+        second.cartesian_pose_target.position.x == third.cartesian_pose_target.position.x
+        and second.cartesian_pose_target.position.y == third.cartesian_pose_target.position.y
+        and second.cartesian_pose_target.position.z == third.cartesian_pose_target.position.z
+    )
 
 
 def test_realised_sequence_tracks_completed_primitives() -> None:

@@ -33,7 +33,7 @@ SESSION_MANIFEST_SCHEMA_VERSION = "session_manifest_v1"
 DATASET_MANIFEST_SCHEMA_VERSION = "dataset_manifest_v1"
 CHECKPOINT_MANIFEST_SCHEMA_VERSION = "checkpoint_manifest_v1"
 RUN_METADATA_SCHEMA_VERSION = "run_metadata_v1"
-_DEFAULT_SCENE_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "scenes" / "dejavu_brain.yaml"
+_DEFAULT_SCENE_CONFIG_PATH = Path(__file__).resolve().parents[3] / "configs" / "scenes" / "dejavu_brain.yaml"
 
 
 def _default_scene_config() -> SceneConfig:

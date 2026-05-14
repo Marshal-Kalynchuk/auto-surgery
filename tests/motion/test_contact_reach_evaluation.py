@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 
-from auto_surgery.motion.generator import SurgicalMotionGenerator
-from auto_surgery.motion.primitives import ContactReach
+from auto_surgery.motion.primitives import ActivePrimitive, ContactReach, evaluate, tip_desired_pose_scene
 from auto_surgery.schemas.commands import Pose, Quaternion, Twist, Vec3
-from auto_surgery.schemas.motion import MotionGeneratorConfig
 from auto_surgery.schemas.results import StepResult
-from auto_surgery.schemas.scene import SceneConfig
 from auto_surgery.schemas.sensors import CameraIntrinsics, CameraView, SafetyStatus, SensorBundle, ToolState
 
 
@@ -69,20 +63,8 @@ class _FakeSceneGeometry:
         return self.surface_point
 
 
-def _motion_config() -> MotionGeneratorConfig:
-    return MotionGeneratorConfig(seed=0)
-
-
-def _generator(*, scene_geometry: _FakeSceneGeometry) -> SurgicalMotionGenerator:
-    generator = SurgicalMotionGenerator(
-        _motion_config(),
-        SceneConfig(tissue_scene_path=Path("test_tissue.obj")),
-    )
-    generator._sequencer._scene_geometry = scene_geometry
-    return generator
-
-
-def test_evaluate_contact_reach_drives_toward_surface() -> None:
+def test_tip_desired_pose_contact_reach_moves_toward_surface() -> None:
+    """Pose path uses scene geometry to bias the goal toward the reported surface point."""
     geometry = _FakeSceneGeometry(
         _FakeSurfacePoint(
             position=Vec3(x=50.0, y=0.0, z=0.0),
@@ -90,8 +72,7 @@ def test_evaluate_contact_reach_drives_toward_surface() -> None:
             signed_distance=50.0,
         )
     )
-    generator = _generator(scene_geometry=geometry)
-    active = SimpleNamespace(
+    active = ActivePrimitive(
         primitive=ContactReach(
             direction_hint_scene=None,
             max_search_mm=200.0,
@@ -100,58 +81,76 @@ def test_evaluate_contact_reach_drives_toward_surface() -> None:
             jaw_target_start=None,
             jaw_target_end=None,
         ),
-        started_at_tick=0,
         started_at_pose_scene=_pose(x=0.0, y=0.0, z=0.0),
         started_at_jaw=0.0,
         duration_s=1.0,
-        elapsed_s=0.0,
+        elapsed_s=0.5,
     )
     step = _step(sim_step_index=1, dt=0.05, in_contact=False)
-    output = generator._evaluate_contact_reach(
-        active=active,
-        last_step=step,
-        tip_now=_pose(x=0.0, y=0.0, z=0.0).position,
-        tip_pose_scene=_pose(x=0.0, y=0.0, z=0.0),
-    )
-
-    twist = output.data()
-    assert twist.linear.x > 0.0
-    assert twist.linear.y == pytest.approx(0.0)
-    assert twist.linear.z == pytest.approx(0.0)
+    desired = tip_desired_pose_scene(active, step, scene_geometry=geometry)
+    assert float(desired.position.x) > 0.0
+    assert float(desired.position.y) == pytest.approx(0.0)
+    assert float(desired.position.z) == pytest.approx(0.0)
 
 
-@pytest.mark.parametrize("in_contact,signed_distance", [(True, 0.2), (False, 1e-4)])
-def test_evaluate_contact_reach_terminates_on_contact_or_threshold(in_contact: bool, signed_distance: float) -> None:
-    geometry = _FakeSceneGeometry(
-        _FakeSurfacePoint(
-            position=Vec3(x=0.2, y=0.0, z=0.0),
-            normal=Vec3(x=1.0, y=0.0, z=0.0),
-            signed_distance=signed_distance,
-        )
-    )
-    generator = _generator(scene_geometry=geometry)
-    active = SimpleNamespace(
+def test_evaluate_contact_reach_twist_points_along_hint_when_no_geometry() -> None:
+    """Legacy twist evaluator still used for jaw/finish bookkeeping; direction hint sets search axis."""
+    active = ActivePrimitive(
         primitive=ContactReach(
-            direction_hint_scene=None,
+            direction_hint_scene=Vec3(x=1.0, y=0.0, z=0.0),
             max_search_mm=200.0,
             peak_speed_mm_per_s=100.0,
             duration_s=1.0,
             jaw_target_start=None,
             jaw_target_end=None,
         ),
-        started_at_tick=0,
         started_at_pose_scene=_pose(x=0.0, y=0.0, z=0.0),
         started_at_jaw=0.0,
         duration_s=1.0,
-        elapsed_s=0.0,
+        elapsed_s=0.5,
     )
-    step = _step(sim_step_index=1, dt=0.05, in_contact=in_contact)
-    output = generator._evaluate_contact_reach(
-        active=active,
-        last_step=step,
-        tip_now=_pose(x=0.0, y=0.0, z=0.0).position,
-        tip_pose_scene=_pose(x=0.0, y=0.0, z=0.0),
-    )
+    step = _step(sim_step_index=1, dt=0.05, in_contact=False)
+    output = evaluate(active, step)
+    assert output.twist_camera.linear.x > 0.0
+    assert output.twist_camera.linear.y == pytest.approx(0.0)
+    assert output.twist_camera.linear.z == pytest.approx(0.0)
 
-    twist = output.data()
-    assert twist == Twist(linear=Vec3(x=0.0, y=0.0, z=0.0), angular=Vec3(x=0.0, y=0.0, z=0.0))
+
+def test_evaluate_contact_reach_marks_finished_when_in_contact() -> None:
+    active = ActivePrimitive(
+        primitive=ContactReach(
+            direction_hint_scene=Vec3(x=1.0, y=0.0, z=0.0),
+            max_search_mm=200.0,
+            peak_speed_mm_per_s=100.0,
+            duration_s=1.0,
+            jaw_target_start=None,
+            jaw_target_end=None,
+        ),
+        started_at_pose_scene=_pose(x=0.0, y=0.0, z=0.0),
+        started_at_jaw=0.0,
+        duration_s=1.0,
+        elapsed_s=0.5,
+    )
+    step = _step(sim_step_index=1, dt=0.05, in_contact=True)
+    output = evaluate(active, step)
+    assert output.is_finished is True
+
+
+def test_evaluate_contact_reach_marks_finished_when_duration_elapsed() -> None:
+    active = ActivePrimitive(
+        primitive=ContactReach(
+            direction_hint_scene=Vec3(x=1.0, y=0.0, z=0.0),
+            max_search_mm=200.0,
+            peak_speed_mm_per_s=100.0,
+            duration_s=1.0,
+            jaw_target_start=None,
+            jaw_target_end=None,
+        ),
+        started_at_pose_scene=_pose(x=0.0, y=0.0, z=0.0),
+        started_at_jaw=0.0,
+        duration_s=1.0,
+        elapsed_s=1.0,
+    )
+    step = _step(sim_step_index=1, dt=0.05, in_contact=False)
+    output = evaluate(active, step)
+    assert output.is_finished is True

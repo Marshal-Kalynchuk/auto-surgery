@@ -7,6 +7,9 @@
 ##                            "dejavu_uterus", "lapgym"
 ##
 ## Linear limits are scene millimetres per second (mm/s) and mm/s^2.
+## ``frustum_margin_mm`` (null) reserves a future FOV sampling hook.
+## DEPRECATED (YAML back-compat only; not used by pose-servo applier):
+##   bias_gain_max, bias_ramp_distance_mm, orientation_bias_gain, orientation_deadband_rad
 
 dejavu_brain:
   max_linear_mm_s: 45.0

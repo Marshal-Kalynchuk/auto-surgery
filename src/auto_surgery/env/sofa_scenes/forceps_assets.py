@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import yaml
 
-from auto_surgery.schemas.commands import Pose, Twist
+from auto_surgery.schemas.commands import Pose, Quaternion, Vec3
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[4]
 _DEFAULT_FORCEPS_CONTRACT_PATH = _PACKAGE_ROOT / "assets" / "forceps" / "dejavu_default.yaml"
@@ -204,73 +204,36 @@ def _mat_mul_vec(matrix: list[list[float]], vector: tuple[float, float, float]) 
     )
 
 
-def _cross(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple[float, float, float]:
-    ax, ay, az = a
-    bx, by, bz = b
-    return (
-        ay * bz - az * by,
-        az * bx - ax * bz,
-        ax * by - ay * bx,
-    )
-
-
-def _twist_camera_to_scene(
-    twist_camera: Twist,
-    scene_from_camera_pose: Pose,
-) -> tuple[float, float, float, float, float, float]:
-    """Transform a camera-frame twist into scene frame using the adjoint transform."""
-
-    rotation = _quat_to_matrix((scene_from_camera_pose.rotation.x, scene_from_camera_pose.rotation.y, scene_from_camera_pose.rotation.z, scene_from_camera_pose.rotation.w))
-    offset = (
-        scene_from_camera_pose.position.x * _CAMERA_TO_SCENE_DEFAULT_SCALE,
-        scene_from_camera_pose.position.y * _CAMERA_TO_SCENE_DEFAULT_SCALE,
-        scene_from_camera_pose.position.z * _CAMERA_TO_SCENE_DEFAULT_SCALE,
-    )
-    tip_linear = (float(twist_camera.linear.x), float(twist_camera.linear.y), float(twist_camera.linear.z))
-    tip_angular = (float(twist_camera.angular.x), float(twist_camera.angular.y), float(twist_camera.angular.z))
-    linear_scene = _mat_mul_vec(rotation, tip_linear)
-    angular_scene = _mat_mul_vec(rotation, tip_angular)
-    angular_cross_translation = _cross(offset, angular_scene)
-    return (
-        linear_scene[0] + angular_cross_translation[0],
-        linear_scene[1] + angular_cross_translation[1],
-        linear_scene[2] + angular_cross_translation[2],
-        angular_scene[0],
-        angular_scene[1],
-        angular_scene[2],
-    )
-
-
-def _shaft_origin_twist_from_tip_twist(
-    twist_tip_scene: tuple[float, float, float, float, float, float],
-    shaft_pose_scene: Pose,
+def shaft_pose_from_tip_target(
+    tip_target_scene: Pose,
+    shaft_measured_scene: Pose,
     tool_tip_offset_local: tuple[float, float, float],
-) -> tuple[float, float, float, float, float, float]:
-    """Shift a tool-tip twist to the shaft-origin frame."""
+) -> Pose:
+    """Infer shaft scene pose from tip target using measured shaft orientation.
 
-    vx, vy, vz, wx, wy, wz = twist_tip_scene
-    rotation = _quat_to_matrix((shaft_pose_scene.rotation.x, shaft_pose_scene.rotation.y, shaft_pose_scene.rotation.z, shaft_pose_scene.rotation.w))
-    offset = (
-        rotation[0][0] * tool_tip_offset_local[0]
-        + rotation[0][1] * tool_tip_offset_local[1]
-        + rotation[0][2] * tool_tip_offset_local[2],
-        rotation[1][0] * tool_tip_offset_local[0]
-        + rotation[1][1] * tool_tip_offset_local[1]
-        + rotation[1][2] * tool_tip_offset_local[2],
-        rotation[2][0] * tool_tip_offset_local[0]
-        + rotation[2][1] * tool_tip_offset_local[1]
-        + rotation[2][2] * tool_tip_offset_local[2],
+    ``p_tip = R_shaft @ offset_local + p_shaft`` with pure translation offset in
+    shaft frame; ``q_tip = q_shaft`` when offset carries no rotation.
+    """
+
+    rotation = _quat_to_matrix(
+        (
+            shaft_measured_scene.rotation.x,
+            shaft_measured_scene.rotation.y,
+            shaft_measured_scene.rotation.z,
+            shaft_measured_scene.rotation.w,
+        )
     )
-    angular = (float(wx), float(wy), float(wz))
-    linear_tip = (float(vx), float(vy), float(vz))
-    omega_cross_r = _cross(angular, offset)
-    return (
-        linear_tip[0] - omega_cross_r[0],
-        linear_tip[1] - omega_cross_r[1],
-        linear_tip[2] - omega_cross_r[2],
-        angular[0],
-        angular[1],
-        angular[2],
+    ox, oy, oz = tool_tip_offset_local
+    wx = rotation[0][0] * ox + rotation[0][1] * oy + rotation[0][2] * oz
+    wy = rotation[1][0] * ox + rotation[1][1] * oy + rotation[1][2] * oz
+    wz = rotation[2][0] * ox + rotation[2][1] * oy + rotation[2][2] * oz
+    return Pose(
+        position=Vec3(
+            x=float(tip_target_scene.position.x) - wx,
+            y=float(tip_target_scene.position.y) - wy,
+            z=float(tip_target_scene.position.z) - wz,
+        ),
+        rotation=tip_target_scene.rotation,
     )
 
 

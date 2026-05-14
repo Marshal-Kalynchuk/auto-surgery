@@ -1,0 +1,31 @@
+{
+  "rule_under_test": ".cursor/rules/external-references.mdc",
+  "test_date": "2026-05-14",
+  "references_file": "docs/library/REFERENCES.md",
+  "references_checked_first": true,
+  "parallel_tracks": [
+    {
+      "id": "sofa_official",
+      "web_query": "SOFA simulation framework official site sofa-framework.org",
+      "primary_urls": [
+        "https://www.sofa-framework.org/about-sofa/",
+        "https://www.sofa-framework.org/support/doc/"
+      ],
+      "notes": "Official SOFA site cluster; use repo SOFA docs for environment specifics."
+    },
+    {
+      "id": "dinov2_arxiv",
+      "web_query": "DINOv2 Meta AI paper arxiv 2023",
+      "primary_urls": [
+        "https://arxiv.org/abs/2304.07193",
+        "https://github.com/facebookresearch/dinov2"
+      ],
+      "matches_references_md": true
+    }
+  ],
+  "artifacts_written": [
+    "docs/research/_rule_smoke_test/2026-05-14-parallel-search-smoke.md",
+    "docs/research/_rule_smoke_test/2026-05-14-parallel-search-smoke.json"
+  ],
+  "references_md_update_required": false
+}

@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING
 import yaml
 
 if TYPE_CHECKING:
-    from auto_surgery.schemas.motion import MotionGeneratorConfig
+    from auto_surgery.schemas.motion import MotionGeneratorConfig, MotionShaping
     from auto_surgery.schemas.scene import SceneConfig
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_MOTION_SHAPING_DEFAULTS_PATH = Path(__file__).resolve().parent / "config" / "motion_shaping_defaults.yaml"
 
 
 def _load_yaml(path: str | Path) -> dict[str, object]:
@@ -76,4 +77,24 @@ def load_motion_config(path: str | Path) -> MotionGeneratorConfig:
     return MotionGeneratorConfig.model_validate(payload)
 
 
-__all__ = ["load_motion_config", "load_scene_config"]
+def load_scene_motion_shaping(scene_id: str) -> "MotionShaping":
+    """Load per-scene ``MotionShaping`` defaults from ``motion_shaping_defaults.yaml``."""
+
+    from auto_surgery.schemas.motion import MotionShaping
+
+    payload = _load_yaml(_MOTION_SHAPING_DEFAULTS_PATH)
+    key = str(scene_id).strip()
+    if key not in payload:
+        available = sorted(str(k) for k in payload)
+        raise KeyError(
+            f"No motion_shaping defaults for scene_id={key!r}; available: {available}",
+        )
+    row = payload[key]
+    if not isinstance(row, dict):
+        raise KeyError(
+            f"motion_shaping defaults for scene_id={key!r} must be a mapping, got {type(row).__name__}.",
+        )
+    return MotionShaping.model_validate(row)
+
+
+__all__ = ["load_motion_config", "load_scene_config", "load_scene_motion_shaping"]

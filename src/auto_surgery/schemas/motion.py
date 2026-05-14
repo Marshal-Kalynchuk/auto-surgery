@@ -10,7 +10,13 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_va
 
 
 class MotionShaping(BaseModel):
-    """Configuration for motion shaping (bounds, scaling, biasing)."""
+    """Configuration for motion shaping (bounds, scaling, biasing).
+
+    Speed and acceleration caps apply to the pose-servo applier (scene-frame
+    Cartesian pose commands). Fields ``bias_gain_max``, ``bias_ramp_distance_mm``,
+    ``orientation_bias_gain``, and ``orientation_deadband_rad`` are retained for
+    backward-compatible YAML only; they are not consumed by the pose-servo path.
+    """
 
     model_config = {"extra": "forbid"}
 
@@ -18,10 +24,28 @@ class MotionShaping(BaseModel):
     max_angular_rad_s: float = Field(gt=0.0, description="Maximum angular speed in rad/s")
     max_linear_accel_mm_s2: float = Field(gt=0.0, description="Maximum linear acceleration in mm/s^2")
     max_angular_accel_rad_s2: float = Field(gt=0.0, description="Maximum angular acceleration in rad/s^2")
-    bias_gain_max: float = Field(ge=0.0, le=1.0, description="Maximum bias blending gain [0,1]")
-    bias_ramp_distance_mm: float = Field(gt=0.0, description="Distance in mm over which bias ramps up")
-    orientation_bias_gain: float = Field(ge=0.0, le=1.0, description="Orientation bias gain [0,1]")
-    orientation_deadband_rad: float = Field(ge=0.0, description="Angular deadband in radians")
+    bias_gain_max: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Legacy: not used by pose-servo applier. Maximum bias blending gain [0,1].",
+    )
+    bias_ramp_distance_mm: float = Field(
+        gt=0.0,
+        description="Legacy: not used by pose-servo applier. Distance in mm over which bias ramps up.",
+    )
+    orientation_bias_gain: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Legacy: not used by pose-servo applier. Orientation bias gain [0,1].",
+    )
+    orientation_deadband_rad: float = Field(
+        ge=0.0,
+        description="Legacy: not used by pose-servo applier. Angular deadband in radians.",
+    )
+    frustum_margin_mm: float | None = Field(
+        default=None,
+        description="Reserved for future FOV-aware target sampling. Not consumed by current code.",
+    )
 
 
 _LEGACY_WEIGHT_TO_CANONICAL: tuple[tuple[str, str], ...] = (
@@ -158,6 +182,24 @@ class MotionGeneratorConfig(BaseModel):
                 "primitive_count_max must be greater than or equal to primitive_count_min.",
             )
         return self
+
+    def with_default_motion_shaping(self, scene_id: str) -> "MotionGeneratorConfig":
+        """Return a copy with scene-default ``MotionShaping`` when none is set in YAML.
+
+        When ``motion_shaping`` is already populated, returns ``self`` unchanged so
+        explicit YAML overrides win over ``motion_shaping_defaults.yaml``.
+        """
+
+        if self.motion_shaping is not None:
+            return self
+        from auto_surgery.config import load_scene_motion_shaping
+
+        return self.model_copy(
+            update={
+                "motion_shaping": load_scene_motion_shaping(scene_id),
+                "motion_shaping_enabled": True,
+            },
+        )
 
     @staticmethod
     def _validate_range(

@@ -1,68 +1,48 @@
 ---
-description: Route work through controlled-runtime subagents to keep parent context small
+description: Use Task for heavy work; pick Composer 2, Auto, or Codex 5.3 Spark as the subagent model
 alwaysApply: true
 ---
 
-# Subagent Routing
+# Task delegation
 
-Use subagents via the `Task` tool to reduce parent-agent context bloat and token usage. The parent agent coordinates and synthesizes; subagents do broad reading, searching, execution, and repair.
+Use the `Task` tool when work is exploration-heavy, spans multiple files or subsystems, or would waste parent context on long searches and refactors. The parent coordinates, merges outputs, and owns final integration and verification.
 
-**CRITICAL:** You MUST use the exact `subagent_type` names defined below. Do NOT invent new subagent types or create ad hoc agents.
+**Skip** `Task` for tiny single-file edits, straightforward questions, or one obvious shell check.
 
-## How to Invoke (Example)
+## Subagent models
 
-When delegating, use the `Task` tool with a specific `subagent_type` from the approved list:
+On each `Task` call, set `model` deliberately:
+
+- **Composer 2** (`composer-2-fast`) — fast iteration and broad reads; pick when you need speed over deep reasoning.
+- **Auto** — omit `model` so the subagent uses the default; pick when no special model is required.
+- **Codex 5.3 Spark** (`gpt-5.3-codex-spark-preview-xhigh`) — hard implementation, tricky correctness, or high-risk edits.
+
+Do not override `model` on every trivial follow-up; only set it when the workload clearly benefits.
+
+## Subagent type
+
+Pick `subagent_type` from the **built-in** options exposed by `Task` — for example `explore` for read-only discovery, `generalPurpose` for multi-step research and edits, `code-reviewer` for review passes. Do **not** invent custom types or maintain a long custom roster in-repo.
+
+## Concrete example
 
 ```json
-// ✅ GOOD: Using an approved subagent type
 {
-  "subagent_type": "coding-worker",
-  "description": "Implement IDM data generation script",
-  "prompt": "Read docs/ARCHITECTURE.md section 9.1 and implement the IDM training data generation script in SOFA."
-}
-
-// ❌ BAD: Inventing a subagent type that doesn't exist
-{
-  "subagent_type": "my-custom-sofa-agent", 
-  "description": "Run SOFA",
-  "prompt": "..."
+  "subagent_type": "generalPurpose",
+  "model": "gpt-5.3-codex-spark-preview-xhigh",
+  "description": "Refactor SOFA scene loader",
+  "prompt": "Refactor scene/loader.py so it accepts a SceneConfig dataclass. Touch only scene/loader.py and tests/scene/test_loader.py. Run only those tests. Report changed paths, command run, and the new SceneConfig signature."
 }
 ```
 
-## Routing Order
+## Heavy workflow (parent)
 
-1. Use `worker` first for codebase analysis, multi-file investigation, debugging, refactors, and implementation planning.
-2. Use `simple-worker` for bounded cheap checks: routing, extraction, summarization, schema checks, and "is this done?" validation.
-3. Use `coding-worker` for focused code edits after `worker` has produced findings or a patch plan.
-4. Use `quality-reviewer` for routine code quality review, regression checks, test-gap review, and plan-compliance review.
-5. Use `repair-worker` only when a cheaper worker fails, reports uncertainty, or correctness risk is high.
-6. Use `senior-reasoning` when findings conflict, judgment is unclear, or broad synthesis is needed.
-7. Use `senior-repair` only after `repair-worker` stalls on a stubborn or high-risk fix.
+1. Write a short dependency sketch (todos with edges) before spawning work.
+2. **Wave 1:** issue parallel `Task` calls for items with no shared dependencies. One task owns **one** focused deliverable (one file, one test file, or one plan section).
+3. **Later waves:** depend on prior results; pass only paths and interfaces, not long transcripts.
+4. After the last wave, the parent runs cross-cutting checks (integration tests, full lint, etc.).
 
-## Required Delegation
+## Prompt hygiene
 
-Launch a subagent before doing parent-side exploration when the task involves:
-- More than one subsystem or service
-- More than a few file reads or searches
-- Architecture or codebase findings
-- Implementation planning before edits
-- Reviewing non-trivial code changes or agent-produced patches
-
-## Specialized Agents
-
-Use a specialist only when its domain clearly matches the task:
-
-| Situation | Agent |
-|-----------|-------|
-| Run SOFA simulations, generate IDM data, or test the fast forward model | `sofa-sim-operator` |
-| Fine-tune foundation models (DINOv2, V-JEPA 2, DINO-WM) or run behavioral cloning | `model-trainer` |
-| Audit or verify the Layer 1 sync gate and Layer 2 safety evaluator | `safety-verifier` |
-| Test or implement the `Environment` protocol for KUKA or neuroArm | `robot-interface-tester` |
-
-If unsure, use `worker`; it can recommend a specialist handoff.
-
-## Exceptions
-
-- Do not use a subagent for tiny single-file edits, simple questions, or obvious one-command checks.
-- Do not create nested or circular subagent chains.
-- Do not ask subagents to dump large raw context back to the parent; request findings, paths, and next actions.
+- Keep prompts short (~10 lines): goal, paths in scope, tests to run, what to report back.
+- Do not nest subagents or create circular `Task` chains.
+- Each subagent runs **only** tests in its scope and reports: changed paths, commands run, and any API or data contract the next step needs.

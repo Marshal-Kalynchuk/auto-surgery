@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 import numpy as np
 
+from auto_surgery.motion.frames import pose_interpolate
 from auto_surgery.schemas.commands import Pose, Quaternion, Twist, Vec3
 from auto_surgery.schemas.results import StepResult
 
@@ -110,6 +111,142 @@ class ActivePrimitive:
 
 def evaluate(active: ActivePrimitive, last_step: StepResult) -> PrimitiveOutput:
     return _evaluate(active, last_step)
+
+
+def tip_desired_pose_scene(
+    active: ActivePrimitive,
+    last_step: StepResult,
+    *,
+    scene_geometry: object | None = None,
+) -> Pose:
+    """Scene-frame tool-tip pose target for the current tick (pose-servo path)."""
+
+    elapsed_s = max(0.0, float(active.elapsed_s))
+    duration_s = max(0.0, float(active.duration_s))
+    tau = _time_to_fraction(elapsed_s, duration_s)
+    s = min_jerk_position_scalar(tau)
+    started = active.started_at_pose_scene
+    primitive = active.primitive
+
+    if isinstance(primitive, Reach):
+        return pose_interpolate(started, primitive.target_pose_scene, s)
+
+    if isinstance(primitive, Hold):
+        return started
+
+    if isinstance(primitive, ContactReach):
+        goal = _contact_reach_goal_pose(primitive, last_step, scene_geometry=scene_geometry)
+        return pose_interpolate(started, goal, s)
+
+    if isinstance(primitive, Drag):
+        tip_scene = last_step.sensors.tool.pose
+        direction = _preferred_direction(primitive.direction_hint_scene, tip_scene)
+        normal = np.array([0.0, 0.0, 1.0], dtype=float)
+        tangent = direction - normal * float(np.dot(direction, normal))
+        if _vector_norm(tangent) <= _EPS:
+            tangent = np.array([1.0, 0.0, 0.0], dtype=float)
+        tangent = _axis_unit(tangent)
+        end_pos = _vec_to_array(started.position) + tangent * float(primitive.distance_mm)
+        end_pose = Pose(position=_vector_to_vec3(end_pos), rotation=started.rotation)
+        return pose_interpolate(started, end_pose, s)
+
+    if isinstance(primitive, Brush):
+        tip_scene = last_step.sensors.tool.pose
+        direction = _axis_unit(_preferred_direction(None, tip_scene))
+        omega = 2.0 * math.pi * primitive.frequency_hz
+        offset = direction * (float(primitive.amplitude_mm) * math.sin(omega * elapsed_s))
+        pos = _vec_to_array(started.position) + offset
+        return Pose(position=_vector_to_vec3(pos), rotation=started.rotation)
+
+    if isinstance(primitive, Grip):
+        return _grip_tip_desired_pose(active, primitive, last_step, scene_geometry=scene_geometry)
+
+    return started
+
+
+def _contact_reach_goal_pose(
+    primitive: ContactReach,
+    last_step: StepResult,
+    *,
+    scene_geometry: object | None,
+) -> Pose:
+    tip_scene = last_step.sensors.tool.pose
+    if scene_geometry is not None:
+        try:
+            cp = scene_geometry.closest_surface_point(tip_scene.position)
+        except Exception:
+            cp = None
+        if cp is not None:
+            cp_normal = _vec_to_array(getattr(cp, "normal", Vec3(x=0.0, y=0.0, z=1.0)))
+            cp_position = _vec_to_array(getattr(cp, "position", tip_scene.position))
+            target_position = cp_position + cp_normal * _SMALL_STANDOFF_MM
+            return Pose(position=_vector_to_vec3(target_position), rotation=tip_scene.rotation)
+
+    search_dir = _preferred_direction(primitive.direction_hint_scene, tip_scene)
+    if np.linalg.norm(search_dir) <= _EPS:
+        search_dir = np.array([0.0, 0.0, 1.0], dtype=float)
+    search_dir = _axis_unit(search_dir)
+    target_point = _build_search_pose(tip_scene, search_dir, primitive.max_search_mm)
+    target_pos = _vec_to_array(target_point.position) - search_dir * _SMALL_STANDOFF_MM
+    return Pose(position=_vector_to_vec3(target_pos), rotation=tip_scene.rotation)
+
+
+def _grip_tip_desired_pose(
+    active: ActivePrimitive,
+    primitive: Grip,
+    last_step: StepResult,
+    *,
+    scene_geometry: object | None,
+) -> Pose:
+    duration_s = max(0.0, float(active.duration_s))
+    elapsed_s = max(0.0, float(active.elapsed_s))
+    if duration_s <= 0.0:
+        return active.started_at_pose_scene
+
+    phase1 = max(
+        0.0,
+        duration_s
+        - (
+            primitive.jaw_close_duration_s
+            + primitive.lift_duration_s
+            + primitive.release_after_s
+            + primitive.lift_duration_s
+        ),
+    )
+    phase2 = primitive.jaw_close_duration_s
+    phase3 = primitive.lift_duration_s
+    phase4 = primitive.release_after_s
+
+    p2 = phase1
+    p3 = phase1 + phase2
+    p4 = phase1 + phase2 + phase3
+    p5 = phase1 + phase2 + phase3 + phase4
+
+    tip_scene = last_step.sensors.tool.pose
+    normal = np.array([0.0, 0.0, 1.0], dtype=float)
+
+    if elapsed_s < p2:
+        sub = replace(active, primitive=primitive.approach, duration_s=max(phase1, _CONTACT_STEP_MIN_DT), elapsed_s=min(elapsed_s, phase1))
+        return tip_desired_pose_scene(sub, last_step, scene_geometry=scene_geometry)
+
+    if elapsed_s < p3:
+        return tip_scene
+
+    if elapsed_s < p4:
+        lift_t = _time_to_fraction(elapsed_s - p3, max(phase3, _CONTACT_STEP_MIN_DT))
+        target_pos = _vec_to_array(tip_scene.position) + normal * float(primitive.lift_distance_mm) * lift_t
+        return Pose(position=_vector_to_vec3(target_pos), rotation=tip_scene.rotation)
+
+    if elapsed_s < p5:
+        return tip_scene
+
+    phase_len = max(duration_s - p5, _CONTACT_STEP_MIN_DT)
+    t_phase = _time_to_fraction(elapsed_s - p5, phase_len)
+    target_pose = Pose(
+        position=_vector_to_vec3(_vec_to_array(tip_scene.position) + normal * _SMALL_STANDOFF_MM),
+        rotation=tip_scene.rotation,
+    )
+    return pose_interpolate(tip_scene, target_pose, min_jerk_position_scalar(t_phase))
 
 
 def _evaluate(active: ActivePrimitive, last_step: StepResult) -> PrimitiveOutput:

@@ -266,22 +266,39 @@ class Sequencer:
         else:
             target_center = Vec3(x=0.0, y=0.0, z=0.0)
         start_pose_scene = self._tool_pose_scene(last_step)
+        target_rotation = self._approach_axis_rotation_or_default(start_pose_scene)
         jaw_start, jaw_end = self._sample_jaw_targets()
 
         return Reach(
             target_pose_scene=Pose(
                 position=target_center,
-                rotation=_compose_with_jitter(
-                    base=start_pose_scene.rotation,
-                    jitter_rad=0.0,
-                    rng=self._rng,
-                ),
+                rotation=target_rotation,
             ),
             duration_s=0.5 * sum(self.motion_config.reach_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
             end_on_contact=True,
         )
+
+    def _approach_axis_rotation_or_default(self, start_pose_scene: Pose) -> Quaternion:
+        """Return the start rotation aligned to ``approach_axis_scene`` when set.
+
+        Used by the first approach so the tool reaches the surgical area with
+        the shaft already pointing along the fixed insertion direction; later
+        primitives only need to apply small jitter around that axis.
+        """
+
+        approach_axis_vec = self._orientation_bias.approach_axis_scene
+        if approach_axis_vec is None:
+            return _compose_with_jitter(base=start_pose_scene.rotation, jitter_rad=0.0, rng=self._rng)
+        start_forward = _apply_rotation(
+            _quat_to_matrix(start_pose_scene.rotation),
+            _vec_to_array(self._orientation_bias.forward_axis_local),
+        )
+        desired_forward = _normalize(_vec_to_array(approach_axis_vec))
+        base_to_desired = _quat_from_vector_to_vector(start_forward, desired_forward)
+        rotated = _quat_multiply(base_to_desired, _quat_to_tuple(start_pose_scene.rotation))
+        return _quat_to_pose(rotated)
 
     def _sample_jaw_targets(self) -> tuple[float | None, float | None]:
         if self._rng.random() >= float(self.motion_config.jaw_change_probability):
@@ -299,23 +316,29 @@ class Sequencer:
             start_pose_scene=start_pose_scene,
         )
         start_forward = _apply_rotation(_quat_to_matrix(start_pose_scene.rotation), _vec_to_array(self._orientation_bias.forward_axis_local))
-        scene_center_dir = self._scene_center_direction(
-            target_position=target_position,
-            last_step=last_step,
-            start_pose_scene=start_pose_scene,
-        )
-        blend = float(self._orientation_bias.surface_normal_blend)
-        desired_forward = _slerp_direction(
-            start=scene_center_dir,
-            end=surface_normal,
-            blend=blend,
-        )
+        approach_axis_vec = self._orientation_bias.approach_axis_scene
+        if approach_axis_vec is not None:
+            desired_forward = _normalize(_vec_to_array(approach_axis_vec))
+            jitter_rad = float(self._orientation_bias.approach_axis_jitter_rad)
+        else:
+            scene_center_dir = self._scene_center_direction(
+                target_position=target_position,
+                last_step=last_step,
+                start_pose_scene=start_pose_scene,
+            )
+            blend = float(self._orientation_bias.surface_normal_blend)
+            desired_forward = _slerp_direction(
+                start=scene_center_dir,
+                end=surface_normal,
+                blend=blend,
+            )
+            jitter_rad = float(self.motion_config.target_orientation_jitter_rad)
         base_to_desired = _quat_from_vector_to_vector(start_forward, desired_forward)
         base_rotation = _quat_multiply(base_to_desired, _quat_to_tuple(start_pose_scene.rotation))
         rotation = _add_jitter_about_axis(
             quaternion=base_rotation,
             axis=desired_forward,
-            jitter_rad=float(self.motion_config.target_orientation_jitter_rad),
+            jitter_rad=jitter_rad,
             rng=self._rng_noise,
         )
         return Pose(position=_vector_to_vec3(target_position), rotation=_quat_to_pose(rotation))
@@ -356,6 +379,7 @@ class Sequencer:
             return _safe_vector(position), _safe_vector(target_direction)
 
     def _sample_target_position(self, last_step: StepResult) -> np.ndarray:
+        # TODO(fov): add frustum-margin rejection here when implementing controlled out-of-frame distribution.
         volumes = self._sample_target_volumes(last_step, fallback_to_current=True)
         if not volumes:
             if last_step is not None:

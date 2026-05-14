@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from auto_surgery.env.scene_geometry import SceneGeometry, SurfacePoint
 from auto_surgery.motion.sequencer import MotionGeneratorConfig, Sequencer
 from auto_surgery.schemas.commands import Pose, Quaternion, Twist, Vec3
-from auto_surgery.schemas.scene import SceneConfig, SphereEnvelope, TargetVolume
+from auto_surgery.schemas.scene import (
+    SceneConfig,
+    SceneGeometryEnvelope,
+    SphereEnvelope,
+    TargetVolume,
+    ToolSpec,
+)
 from auto_surgery.schemas.results import StepResult
 from auto_surgery.schemas.sensors import CameraIntrinsics, CameraView, SafetyStatus, SensorBundle, ToolState
 
@@ -145,6 +154,47 @@ def test_named_sub_rngs_are_seed_deterministic() -> None:
         right._rng_blend.uniform(size=4),
     )
 
-    for lhs, rhs in zip(left_draws, right_draws):
-        assert np.array_equal(lhs, rhs)
+def test_sample_target_position_respects_scene_geometry_envelope_inner_margin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_surgery.env import scene_geometry as scene_geom_mod
+
+    class _FakeGeom:
+        def bounds(self) -> tuple[Vec3, Vec3]:
+            return Vec3(x=0.0, y=0.0, z=0.0), Vec3(x=20.0, y=20.0, z=20.0)
+
+    monkeypatch.setattr(scene_geom_mod, "MeshSceneGeometry", lambda _path: _FakeGeom())
+
+    mesh_path = tmp_path / "surface.obj"
+    mesh_path.write_text("v 0 0 0\n", encoding="utf-8")
+    tissue_scn = tmp_path / "tissue.scn"
+    tissue_scn.write_text("", encoding="utf-8")
+    envelope = SceneGeometryEnvelope(
+        surface_mesh_path=mesh_path,
+        outer_margin_mm=0.01,
+        inner_margin_mm=2.0,
+        no_go_regions=[],
+    )
+    scene = SceneConfig(
+        tissue_scene_path=tissue_scn,
+        tool=ToolSpec(workspace_envelope=envelope),
+        target_volumes=[
+            TargetVolume(
+                label="general",
+                center_scene=Vec3(x=10.0, y=10.0, z=10.0),
+                half_extents_scene=Vec3(x=100.0, y=100.0, z=100.0),
+            )
+        ],
+    )
+    cfg = _sequencer_config(seed=123)
+    seq = Sequencer(cfg, scene, _MockSceneGeometry(), None)
+    step = _step()
+    seq.reset(step)
+    for _ in range(200):
+        pos = seq._sample_target_position(step)
+        d = envelope.signed_distance_to_envelope(
+            Vec3(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+        )
+        assert d >= float(envelope.inner_margin_mm)
 

@@ -34,6 +34,8 @@ def test_safety_metadata_model_accepts_all_fields() -> None:
         "scaled_by": 0.75,
         "signed_distance_to_envelope_mm": 0.12,
         "signed_distance_to_surface_mm": -0.04,
+        "pose_error_norm_mm": None,
+        "pose_error_norm_rad": None,
     }
 
 
@@ -58,6 +60,8 @@ def test_robot_command_with_safety_serializes() -> None:
         scaled_by=None,
         signed_distance_to_envelope_mm=0.25,
         signed_distance_to_surface_mm=0.18,
+        pose_error_norm_mm=0.5,
+        pose_error_norm_rad=0.01,
     )
     command = RobotCommand(
         timestamp_ns=987_654_321,

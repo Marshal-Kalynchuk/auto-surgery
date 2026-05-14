@@ -1,13 +1,50 @@
 ---
-description: Keep upstream model, library, and dataset links centralized in docs/REFERENCES.md
+description: External research—Parallel CLI skills (web + deep), IDE parallel text+JSON, docs/research artifacts; canonical links in docs/library/REFERENCES.md
 alwaysApply: true
 ---
 
-# External References
+# External research and references
 
-Use `docs/REFERENCES.md` as the source of truth for upstream links tied to the architecture.
+External research (papers, vendor docs, upstream repos, issue trackers, standards) is often the fastest way to unblock design or integration questions. Use it proactively, not only after local options fail.
 
-- Check `docs/REFERENCES.md` before broad web search or when naming a new external dependency.
-- Prefer the canonical links listed there for DINOv2, V-JEPA 2, DINO-WM, SOFA, slot attention, Hopfield, SE(3)-Transformer, Equiformer, BRIDGE, RoboNet, OpenVLA, SAM 2, VL-JEPA, Mamba-2, and Jamba.
-- If a new upstream resource becomes load-bearing, add it to `docs/REFERENCES.md` first, then reference that file from the relevant agent or rule.
-- Do not duplicate long link lists in specialized agent files unless the agent truly needs a tiny subset inline.
+## When to research externally
+
+**Before** searching the local codebase or proposing a workaround, ask:
+- Does this require current information (tools, API versions, best practices that change)?
+- Is the answer load-bearing (will guide architecture, dependencies, or integrations)?
+- Could external expertise (vendor docs, issue trackers, standards bodies) save time?
+
+If yes to any, research first.
+
+## Parallel CLI skills (`parallel-cli`)
+
+**Use parallel skills by reading and invoking the skill itself**—the skills handle all CLI details, output management, and artifact persistence.
+
+**Decision tree:**
+
+1. **Normal lookup, fact-check, current info** → Read and use `parallel-web-search` skill
+   - Examples: "What's the latest React API?", "Does Node 22 support X?", "How do I configure Kubernetes operator Y?"
+   - Fast, cost-effective; results automatically saved as durable JSON artifacts under `docs/research/`
+
+2. **Deep, exhaustive, or comprehensive research** → Read and use `parallel-deep-research` skill **only** when user explicitly asks for "deep", "exhaustive", "thorough", or "comprehensive"
+   - Slower and costlier; best for: literature reviews, comparing frameworks, evaluating vendors, architecture decisions
+   - Results include executive summary + detailed findings
+
+3. **Single URL fetch or ephemeral lookup** → Use built-in `WebFetch` or `WebSearch` if:
+   - Just fetching a single URL (use `WebFetch`)
+   - Quick question where durable artifacts don't matter
+   - Parallel CLI is not available (fall back only if `/parallel-setup` has not been run)
+
+**If parallel-cli is missing:** Tell the user to run `/parallel-setup`, install, then retry. Do not substitute with built-in tools if the user expects parallel-backed research.
+
+## Where outputs go
+
+- Persist **durable** findings under **`docs/research/`** with a clear subpath (e.g. `docs/research/architecture/…`, `docs/research/sofa/…`). Prefer small, named files over chat-only answers.
+- When a topic has both narrative and structured data, write **both**: a **`*.md`** Markdown summary (conclusions, caveats, links in prose) and a companion **`*.json`** (schemas, key–value extractions, machine-consumable lists). Same stem when practical, e.g. `topic-name.md` + `topic-name.json`.
+- Ephemeral scratch is fine in-session; anything that should survive the next PR or handoff belongs under `docs/research/`.
+
+## Canonical links
+
+- Use **`docs/library/REFERENCES.md`** as the source of truth for upstream links tied to the architecture.
+- Check that file before broad web search or when introducing a new load-bearing dependency; add entries there first, then point code or rules at it.
+- Do not duplicate long link lists in agent files unless a tiny inline subset is necessary for context.

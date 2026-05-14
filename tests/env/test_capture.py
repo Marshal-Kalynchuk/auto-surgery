@@ -31,11 +31,7 @@ class _RootForCamera:
         return object()
 
 
-def _pose_up_x_positive_90() -> tuple[float, float, float]:
-    return (0.0, 0.0, 1.0)
-
-
-def test_attach_capture_camera_uses_computed_up_and_fov(monkeypatch) -> None:
+def test_attach_capture_camera_uses_pose_orientation_and_fov(monkeypatch) -> None:
     root = _RootForCamera()
     pose = Pose(
         position=Vec3(x=1.0, y=2.0, z=3.0),
@@ -54,11 +50,13 @@ def test_attach_capture_camera_uses_computed_up_and_fov(monkeypatch) -> None:
         camera_intrinsics=intrinsics,
     )
 
-    observed_up = tuple(float(value) for value in root.kwargs["up"])  # type: ignore[arg-type]
-    expected_up = _pose_up_x_positive_90()
-    assert observed_up[0] == pytest.approx(expected_up[0], abs=1e-12)
-    assert observed_up[1] == pytest.approx(expected_up[1], abs=1e-12)
-    assert observed_up[2] == pytest.approx(expected_up[2], abs=1e-12)
+    assert root.kwargs["position"] == [1.0, 2.0, 3.0]
+    assert root.kwargs["orientation"] == [
+        float(pose.rotation.x),
+        float(pose.rotation.y),
+        float(pose.rotation.z),
+        float(pose.rotation.w),
+    ]
     expected_fov = 2.0 * math.degrees(math.atan(96.0 / (2.0 * 350.0)))
     assert math.isclose(float(root.kwargs["fieldOfView"]), expected_fov, rel_tol=0.0, abs_tol=1e-7)
     assert root.kwargs["widthViewport"] == 64
@@ -87,11 +85,7 @@ def test_pre_init_hook_passes_camera_up_to_attach_capture_camera(monkeypatch) ->
     capture = SofaNativeRgbCapture(width=64, height=64)
     capture.pre_init_hook(object(), EnvConfig(seed=3, scene=scene))
 
-    captured_up = tuple(float(value) for value in captured["up"])  # type: ignore[arg-type]
-    expected_up = _pose_up_x_positive_90()
-    assert captured_up[0] == pytest.approx(expected_up[0], abs=1e-12)
-    assert captured_up[1] == pytest.approx(expected_up[1], abs=1e-12)
-    assert captured_up[2] == pytest.approx(expected_up[2], abs=1e-12)
+    assert captured["camera_pose"] == scene.camera_extrinsics_scene
     assert captured["camera_intrinsics"] == scene.camera_intrinsics
 
 

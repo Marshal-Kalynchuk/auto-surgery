@@ -6,6 +6,7 @@ import math
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
+
 from auto_surgery.schemas.motion import MotionShaping
 
 
@@ -94,6 +95,8 @@ class SafetyMetadata(BaseModel):
     scaled_by: float | None = None
     signed_distance_to_envelope_mm: float | None = None
     signed_distance_to_surface_mm: float | None = None
+    pose_error_norm_mm: float | None = None
+    pose_error_norm_rad: float | None = None
 
 
 class RobotCommand(BaseModel):
@@ -138,4 +141,8 @@ class RobotCommand(BaseModel):
                 raise ValueError(
                     "Only the payload matching control_mode may be populated."
                 )
+        if self.control_mode == ControlMode.CARTESIAN_POSE and self.frame != ControlFrame.SCENE:
+            raise ValueError(
+                "CARTESIAN_POSE requires frame=SCENE; camera-frame pose commands are not produced internally."
+            )
         return self

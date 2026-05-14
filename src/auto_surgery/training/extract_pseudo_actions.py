@@ -2,31 +2,29 @@
 
 from __future__ import annotations
 
+import math
+
 from auto_surgery.logging.storage import session_manifest_path
 from auto_surgery.logging.writer import SessionWriter
 from auto_surgery.models.idm import IDMConfig, build_idm_mlp
-from auto_surgery.schemas.commands import ControlMode, RobotCommand, Twist, Vec3
+from auto_surgery.schemas.commands import ControlFrame, ControlMode, Pose, Quaternion, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.logging import LoggedFrame
 from auto_surgery.schemas.manifests import DatasetManifest
 from auto_surgery.training.checkpoints import load_torch_checkpoint
 from auto_surgery.training.datasets import iter_logged_frames
+from auto_surgery.training.idm_train import vectorize_action_features
+
+
+def _normalized_quaternion(*, w: float, x: float, y: float, z: float) -> Quaternion:
+    norm = math.sqrt(w * w + x * x + y * y + z * z)
+    if norm <= 1e-12:
+        return Quaternion(w=1.0, x=0.0, y=0.0, z=0.0)
+    inv = 1.0 / norm
+    return Quaternion(w=w * inv, x=x * inv, y=y * inv, z=z * inv)
 
 
 def _vectorize_sensor_obs(command: RobotCommand, *, twist_keys: list[str]) -> list[float]:
-    if command.cartesian_twist is None:
-        raise ValueError("Stage-0 extract expects an action with cartesian_twist.")
-    values = {
-        "cartesian_twist.linear.x": command.cartesian_twist.linear.x,
-        "cartesian_twist.linear.y": command.cartesian_twist.linear.y,
-        "cartesian_twist.linear.z": command.cartesian_twist.linear.z,
-        "cartesian_twist.angular.x": command.cartesian_twist.angular.x,
-        "cartesian_twist.angular.y": command.cartesian_twist.angular.y,
-        "cartesian_twist.angular.z": command.cartesian_twist.angular.z,
-    }
-    missing = [key for key in twist_keys if key not in values]
-    if missing:
-        raise ValueError(f"action cartesian_twist missing keys: {missing}")
-    return [float(values[key]) for key in twist_keys]
+    return vectorize_action_features(command, feature_keys=twist_keys)
 
 
 def _vectorize_action_from_vector(
@@ -35,6 +33,28 @@ def _vectorize_action_from_vector(
     if len(action_vec) != len(twist_keys):
         raise ValueError("Action vector length does not match twist_keys.")
     key_by_index = dict(zip(twist_keys, action_vec))
+    if twist_keys and twist_keys[0].startswith("cartesian_pose_target"):
+        return RobotCommand(
+            timestamp_ns=0,
+            cycle_id=cycle_id,
+            control_mode=ControlMode.CARTESIAN_POSE,
+            frame=ControlFrame.SCENE,
+            cartesian_pose_target=Pose(
+                position=Vec3(
+                    x=float(key_by_index["cartesian_pose_target.position.x"]),
+                    y=float(key_by_index["cartesian_pose_target.position.y"]),
+                    z=float(key_by_index["cartesian_pose_target.position.z"]),
+                ),
+                rotation=_normalized_quaternion(
+                    w=float(key_by_index["cartesian_pose_target.rotation.w"]),
+                    x=float(key_by_index["cartesian_pose_target.rotation.x"]),
+                    y=float(key_by_index["cartesian_pose_target.rotation.y"]),
+                    z=float(key_by_index["cartesian_pose_target.rotation.z"]),
+                ),
+            ),
+            enable=True,
+            source="idm",
+        )
     linear = Vec3(
         x=key_by_index.get("cartesian_twist.linear.x", 0.0),
         y=key_by_index.get("cartesian_twist.linear.y", 0.0),

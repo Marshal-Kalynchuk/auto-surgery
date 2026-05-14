@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from auto_surgery.env.sofa_orchestration import SofaEnvironment
 from auto_surgery.schemas.commands import (
+    ControlFrame,
     ControlMode,
     Pose,
     Quaternion,
@@ -166,48 +169,100 @@ def _build_environment(initial_tool_x: float) -> tuple[SofaEnvironment, _Predict
     return env, backend, config
 
 
-def _command(*, cycle_id: int, linear_x: float) -> RobotCommand:
+def _pose_command(*, cycle_id: int, tip_x_mm: float) -> RobotCommand:
     return RobotCommand(
-        timestamp_ns=1_000 * (cycle_id + 1),
+        timestamp_ns=1_000_000_000 * (cycle_id + 1),
         cycle_id=cycle_id,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=linear_x, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
+        control_mode=ControlMode.CARTESIAN_POSE,
+        frame=ControlFrame.SCENE,
+        cartesian_pose_target=Pose(
+            position=Vec3(x=tip_x_mm, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
         enable=True,
     )
 
 
-def test_orchestration_predictive_scaling_updates_command_and_safety() -> None:
+def test_orchestration_pose_command_passes_through_when_inside_envelope() -> None:
     env, backend, config = _build_environment(initial_tool_x=0.3)
     env.reset(config)
 
-    result = env.step(_command(cycle_id=0, linear_x=0.3))
+    cmd = _pose_command(cycle_id=0, tip_x_mm=0.4)
+    result = env.step(cmd)
 
     assert result.sensors.safety.command_blocked is False
     assert backend.last_command is not None
-    assert float(backend.last_command.cartesian_twist.linear.x) == pytest.approx(0.2)
-    assert backend.last_command.safety is not None
-    assert backend.last_command.safety.clamped_linear is True
-    assert backend.last_command.safety.scaled_by == pytest.approx(2.0 / 3.0)
-    assert backend.last_command.safety.signed_distance_to_envelope_mm == pytest.approx(0.5)
+    assert backend.last_command.control_mode == ControlMode.CARTESIAN_POSE
+    assert backend.last_command.frame == ControlFrame.SCENE
+    assert float(backend.last_command.cartesian_pose_target.position.x) == pytest.approx(0.4)
 
 
-def test_orchestration_predictive_hard_block_rejects_out_of_bounds_motion() -> None:
+def test_orchestration_workspace_envelope_blocks_pose_target_outside() -> None:
     env, backend, config = _build_environment(initial_tool_x=0.3)
     env.reset(config)
 
-    command = _command(cycle_id=0, linear_x=1.5)
+    command = _pose_command(cycle_id=0, tip_x_mm=1.5)
     blocked, reason = env._command_block_reason(command)
 
     assert blocked is True
     assert reason == "tip_outside_workspace_envelope"
     assert command.safety is not None
     assert command.safety.clamped_linear is False
-    assert command.safety.signed_distance_to_envelope_mm < 0.0
+    assert command.safety.signed_distance_to_envelope_mm is not None
+    assert float(command.safety.signed_distance_to_envelope_mm) < 0.0
 
     result = env.step(command)
     assert result.sensors.safety.command_blocked is True
     assert backend.last_command is not None
-    assert float(backend.last_command.cartesian_twist.linear.x) == pytest.approx(0.0)
+    assert backend.last_command.control_mode == ControlMode.CARTESIAN_TWIST
+    assert backend.last_command.enable is False
+
+
+def test_orchestration_scene_geometry_envelope_blocks_pose_outside_inflated_aabb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from auto_surgery.env import scene_geometry as scene_geom_mod
+
+    class _FakeGeom:
+        def bounds(self) -> tuple[Vec3, Vec3]:
+            return Vec3(x=0.0, y=0.0, z=0.0), Vec3(x=1.0, y=1.0, z=1.0)
+
+    monkeypatch.setattr(scene_geom_mod, "MeshSceneGeometry", lambda _path: _FakeGeom())
+
+    pose = Pose(
+        position=Vec3(x=0.5, y=0.5, z=0.5),
+        rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+    )
+    backend = _PredictiveBackend(pose)
+    envelope = SceneGeometryEnvelope(
+        surface_mesh_path=Path("/fake_surface.obj"),
+        outer_margin_mm=0.01,
+        inner_margin_mm=0.0,
+        no_go_regions=[],
+    )
+    scene = SceneConfig(
+        tissue_scene_path=Path("/tmp/orchestration_predictive_scene.xml"),
+        tool=ToolSpec(workspace_envelope=envelope),
+    )
+
+    def backend_factory(_scene_path: str, _extra: dict[str, object] | None) -> _PredictiveBackend:
+        return backend
+
+    env = SofaEnvironment(
+        sofa_scene_path="/tmp/orchestration_predictive_scene.xml",
+        scene_config=scene,
+        sofa_backend_factory=backend_factory,
+    )
+    config = EnvConfig(
+        seed=123,
+        scene=scene,
+        control_rate_hz=1.0,
+        frame_rate_hz=30.0,
+    )
+    env.reset(config)
+
+    command = _pose_command(cycle_id=0, tip_x_mm=10.0)
+    blocked, reason = env._command_block_reason(command)
+
+    assert blocked is True
+    assert reason == "tip_outside_workspace_envelope"

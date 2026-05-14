@@ -7,6 +7,7 @@ import pytest
 from auto_surgery.logging.case_log import CaseCatalog
 from auto_surgery.logging.storage import session_manifest_path
 from auto_surgery.logging.writer import SessionWriter
+from auto_surgery.config import load_scene_config
 from auto_surgery.schemas.commands import ControlMode, Pose, Quaternion, RobotCommand, Twist, Vec3
 from auto_surgery.schemas.logging import LoggedFrame, SafetyDecision
 from auto_surgery.schemas.manifests import (
@@ -30,6 +31,10 @@ from auto_surgery.training.datasets import frame_count_estimate, iter_logged_fra
 from auto_surgery.training.extract_pseudo_actions import extract_pseudo_actions
 from auto_surgery.training.idm_train import train_idm
 from auto_surgery.training.sofa_smoke import run_sofa_smoke_pipeline
+
+
+def _test_scene_config() -> SceneConfig:
+    return load_scene_config("configs/scenes/dejavu_brain.yaml")
 
 
 class _SyntheticEpisodeEnvironment:
@@ -327,6 +332,7 @@ def test_idm_stage0_stub_pipeline(tmp_path: Path) -> None:
     sim.reset(
         EnvConfig(
             seed=3,
+            scene=_test_scene_config(),
         )
     )
 
@@ -430,7 +436,7 @@ def test_idm_stage0_stub_pipeline(tmp_path: Path) -> None:
 
 def test_synthetic_episode_environment_emits_tool_contact_fields() -> None:
     sim = _SyntheticEpisodeEnvironment(tool_wrench=Vec3(x=0.2, y=0.0, z=-0.5), in_contact=True)
-    sim.reset(EnvConfig(seed=5))
+    sim.reset(EnvConfig(seed=5, scene=_test_scene_config()))
     step = sim.step(
         RobotCommand(
             timestamp_ns=123,
@@ -454,7 +460,7 @@ def test_synthetic_runtime_backend_emits_tool_contact_fields() -> None:
         tool_wrench=Vec3(x=-0.3, y=0.1, z=0.0),
         in_contact=False,
     )
-    reset = backend.reset(EnvConfig(seed=8))
+    reset = backend.reset(EnvConfig(seed=8, scene=_test_scene_config()))
     assert reset.sensors.tool.wrench == Vec3(x=-0.3, y=0.1, z=0.0)
     assert reset.sensors.tool.in_contact is False
 
@@ -487,7 +493,7 @@ def test_sofa_smoke_pipeline(tmp_path: Path) -> None:
         derived_session_id="sofa_session_stage0_derived",
         sofa_scene_path="test://sofa_case_stage0",
         sofa_backend_factory=lambda scene_path, _extra: _SyntheticRuntimeBackend(scene_path),
-        scene_config=SceneConfig(),
+        scene_config=_test_scene_config(),
         steps=24,
         train_steps=64,
         train_lr=5e-3,

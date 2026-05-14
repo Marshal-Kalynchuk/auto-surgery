@@ -1,5 +1,7 @@
 tissue_scene_path: src/auto_surgery/env/sofa_scenes/brain_dejavu_episodic.scn.template
 poc_scene_path: src/auto_surgery/env/sofa_scenes/brain_dejavu_forceps_poc.scn
+# Defaults under TissueAssetSpec (surface mesh for workspace envelope + scene geometry).
+tissue_assets: {}
 tool:
   tool_id: dejavu_forceps
   # Matches the canonical pose used by brain_dejavu_forceps_poc.scn (OglModel translation="0 -30 40")

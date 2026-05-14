@@ -16,7 +16,7 @@ from auto_surgery.env.sofa import (
     resolve_sofa_runtime_import_candidates,
 )
 from auto_surgery.env.sofa_tools import build_forceps_observer
-from auto_surgery.schemas.commands import ControlMode, Pose, Quaternion, RobotCommand
+from auto_surgery.schemas.commands import ControlFrame, ControlMode, Pose, Quaternion, RobotCommand
 from auto_surgery.schemas.manifests import EnvConfig, SceneConfig
 from auto_surgery.schemas.results import StepResult
 from auto_surgery.schemas.scene import SceneGraph, SlotRecord, ToolSpec
@@ -45,10 +45,11 @@ def _rollout(env: Environment) -> int:
     cmd = RobotCommand(
         timestamp_ns=100,
         cycle_id=0,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=0.1, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
+        control_mode=ControlMode.CARTESIAN_POSE,
+        frame=ControlFrame.SCENE,
+        cartesian_pose_target=Pose(
+            position=Vec3(x=0.1, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
         enable=True,
     )
@@ -215,10 +216,11 @@ def _joint_command(step_index: int, *, enable: bool = True, cycle_id: int | None
     return RobotCommand(
         timestamp_ns=100_000 + step_index,
         cycle_id=step_index if cycle_id is None else cycle_id,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=float(step_index) * 0.01, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
+        control_mode=ControlMode.CARTESIAN_POSE,
+        frame=ControlFrame.SCENE,
+        cartesian_pose_target=Pose(
+            position=Vec3(x=float(step_index) * 0.01, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
         enable=enable,
         source="test",
@@ -566,10 +568,11 @@ def test_sofa_contract_with_injected_backend_round_trip() -> None:
     cmd = RobotCommand(
         timestamp_ns=1_000_000,
         cycle_id=0,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=0.05, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
+        control_mode=ControlMode.CARTESIAN_POSE,
+        frame=ControlFrame.SCENE,
+        cartesian_pose_target=Pose(
+            position=Vec3(x=0.05, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
         enable=True,
     )
@@ -832,20 +835,9 @@ def test_sofa_environment_mode_dispatch_and_blocking_noop() -> None:
     active_step = env.step(active)
     assert active_step.sensors.safety.command_blocked is False
     assert backend.last_command is not None
-    assert backend.last_command.control_mode == ControlMode.CARTESIAN_TWIST
-    assert backend.last_command.cartesian_twist is not None
-    twist = backend.last_command.cartesian_twist
-    assert any(
-        v != 0.0
-        for v in (
-            twist.linear.x,
-            twist.linear.y,
-            twist.linear.z,
-            twist.angular.x,
-            twist.angular.y,
-            twist.angular.z,
-        )
-    )
+    assert backend.last_command.control_mode == ControlMode.CARTESIAN_POSE
+    assert backend.last_command.frame == ControlFrame.SCENE
+    assert backend.last_command.cartesian_pose_target is not None
 
     blocked = env.step(active)
     assert blocked.sensors.safety.command_blocked is True
@@ -862,8 +854,8 @@ def test_sofa_environment_mode_dispatch_and_blocking_noop() -> None:
     legacy_step = env.step(legacy)
     assert legacy_step.sensors.safety.command_blocked is False
     assert backend.last_command is not None
-    assert backend.last_command.control_mode == ControlMode.CARTESIAN_TWIST
-    assert backend.last_command.cartesian_twist is not None
+    assert backend.last_command.control_mode == ControlMode.CARTESIAN_POSE
+    assert backend.last_command.cartesian_pose_target is not None
     assert legacy_step.sensors.safety.motion_enabled is True
 
     unsupported = RobotCommand(

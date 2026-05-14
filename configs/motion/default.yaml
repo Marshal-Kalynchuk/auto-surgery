@@ -8,6 +8,10 @@
 ## - target_orientation_jitter_rad: orientation noise on Reach / ContactReach targets.
 ## Legacy YAML keys (weight_approach, approach_duration_range_s, etc.) are still
 ## accepted at load time and mapped onto these canonical fields.
+## Optional motion_shaping (see motion_shaping_defaults.yaml): speed/accel caps for
+## pose-servo. When omitted here, recording applies per-scene defaults from that file.
+## DEPRECATED there: bias_*, orientation_* (YAML back-compat only).
+## frustum_margin_mm: null reserves a future FOV hook.
 seed: 0
 primitive_count_min: 8
 primitive_count_max: 20

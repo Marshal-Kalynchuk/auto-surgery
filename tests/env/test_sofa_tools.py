@@ -18,13 +18,37 @@ from auto_surgery.env.sofa_tools import (
     resolve_tool_action_applier_from_spec,
 )
 from auto_surgery.env import sofa_tools as sofa_tools
-from auto_surgery.env.sofa_scenes.forceps_assets import (
-    _clasper_visual_transform,
-    _shaft_origin_twist_from_tip_twist,
-    _twist_camera_to_scene,
-)
+from auto_surgery.env.sofa_scenes.forceps_assets import _clasper_visual_transform, shaft_pose_from_tip_target
+from auto_surgery.env.sofa_tools import UnsupportedControlModeError
 from auto_surgery.schemas.scene import ToolSpec, VisualOverrides
-from auto_surgery.schemas.commands import ControlMode, Pose, Quaternion, RobotCommand, Twist, Vec3
+from auto_surgery.schemas.commands import ControlFrame, ControlMode, Pose, Quaternion, RobotCommand, Twist, Vec3
+from auto_surgery.schemas.motion import MotionShaping
+
+
+_TEST_SHAPING = MotionShaping(
+    max_linear_mm_s=1e9,
+    max_angular_rad_s=1e9,
+    max_linear_accel_mm_s2=1e12,
+    max_angular_accel_rad_s2=1e12,
+    bias_gain_max=0.0,
+    bias_ramp_distance_mm=1.0,
+    orientation_bias_gain=0.0,
+    orientation_deadband_rad=0.0,
+    frustum_margin_mm=None,
+)
+
+
+def _scene_pose_command(*, timestamp_ns: int, cycle_id: int, tip: Pose) -> RobotCommand:
+    return RobotCommand(
+        timestamp_ns=timestamp_ns,
+        cycle_id=cycle_id,
+        control_mode=ControlMode.CARTESIAN_POSE,
+        cartesian_pose_target=tip,
+        frame=ControlFrame.SCENE,
+        enable=True,
+        source="test",
+        motion_shaping=_TEST_SHAPING,
+    )
 
 
 class _Data:
@@ -195,25 +219,19 @@ def _forceps_mesh_set_with_uvs() -> ForcepsMeshSet:
     )
 
 
-def test_forceps_velocity_applier_updates_dof_pose_from_twist() -> None:
+def test_forceps_velocity_applier_writes_pose_servo_velocity() -> None:
     dof = _Dof()
-    applier = build_forceps_velocity_applier(forceps_dof=dof)
-
-    cmd = RobotCommand(
-        timestamp_ns=1000,
-        cycle_id=0,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=0.1, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
-        ),
-        enable=True,
-        source="test",
+    applier = build_forceps_velocity_applier(
+        forceps_dof=dof,
+        tool_tip_offset_local=(0.0, 0.0, 0.0),
+        motion_shaping=_TEST_SHAPING,
     )
-
-    applier(None, cmd)
-    velocity = dof.v.value
-    assert velocity[:3] == pytest.approx([0.001, 0.0, 0.0])
+    tip = Pose(position=Vec3(x=1.0, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+    applier(None, _scene_pose_command(timestamp_ns=0, cycle_id=0, tip=tip))
+    applier(None, _scene_pose_command(timestamp_ns=1_000_000_000, cycle_id=1, tip=tip))
+    assert dof.v.value[0] == pytest.approx(1.0, rel=0.0, abs=1e-6)
+    assert dof.v.value[1] == pytest.approx(0.0, abs=1e-9)
+    assert dof.v.value[2] == pytest.approx(0.0, abs=1e-9)
 
 
 def test_forceps_velocity_applier_discovers_handles_from_scene() -> None:
@@ -222,22 +240,18 @@ def test_forceps_velocity_applier_discovers_handles_from_scene() -> None:
     left = _ForcepsClasper()
     right = _ForcepsClasper()
     scene = _ForcepsScene(_ForcepsNode(forceps_dof=dof, forceps_visual=visual, left=left, right=right))
-    applier = build_forceps_velocity_applier(forceps_dof=None)
-
-    cmd = RobotCommand(
-        timestamp_ns=1001,
-        cycle_id=1,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=1.0, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
-        ),
-        enable=True,
-        source="test",
+    applier = build_forceps_velocity_applier(
+        forceps_dof=None,
+        tool_tip_offset_local=(0.0, 0.0, 0.0),
+        motion_shaping=_TEST_SHAPING,
     )
 
+    tip = Pose(position=Vec3(x=0.01, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+    cmd = _scene_pose_command(timestamp_ns=1_000_000_000, cycle_id=1, tip=tip)
+
+    applier(scene, _scene_pose_command(timestamp_ns=0, cycle_id=0, tip=tip))
     applier(scene, cmd)
-    assert dof.v.value[:3] == [0.01, 0.0, 0.0]
+    assert dof.v.value[:3] == pytest.approx([0.01, 0.0, 0.0], abs=1e-9)
     assert left.rotation.value == pytest.approx((0.3, 0.0, 0.0))
     assert right.rotation.value == pytest.approx((-0.3, 0.0, 0.0))
 
@@ -246,95 +260,77 @@ def test_forceps_velocity_applier_prefers_injected_camera_pose_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dof = _Dof()
-    provider_pose = Pose(
-        position=Vec3(x=0.0, y=0.0, z=0.0),
-        rotation=Quaternion(
-            w=0.7071067811865475,
-            x=0.0,
-            y=0.0,
-            z=0.7071067811865475,
-        ),
-    )
+
     def _forbid_scene_pose_read(_scene: Any) -> Pose:
-        raise AssertionError("provider should skip scene reads")
+        raise AssertionError("pose-servo path must not read camera pose from scene")
 
     monkeypatch.setattr(sofa_tools, "_read_camera_pose", _forbid_scene_pose_read)
     applier = build_forceps_velocity_applier(
         forceps_dof=dof,
-        camera_pose_provider=lambda: provider_pose,
-    )
-    cmd = RobotCommand(
-        timestamp_ns=1004,
-        cycle_id=4,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=1.0, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
+        camera_pose_provider=lambda: Pose(
+            position=Vec3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
-        enable=True,
-        source="test",
+        tool_tip_offset_local=(0.0, 0.0, 0.0),
+        motion_shaping=_TEST_SHAPING,
     )
-
-    expected = _twist_camera_to_scene(
-        Twist(
-            linear=Vec3(x=0.01, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
-        ),
-        provider_pose,
-    )
-    applier(None, cmd)
-    assert dof.v.value[:3] == pytest.approx(expected[:3], abs=1e-12)
+    tip = Pose(position=Vec3(x=0.01, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+    applier(None, _scene_pose_command(timestamp_ns=0, cycle_id=0, tip=tip))
+    applier(None, _scene_pose_command(timestamp_ns=1_000_000_000, cycle_id=4, tip=tip))
+    assert dof.v.value[0] == pytest.approx(0.01, abs=1e-9)
 
 
 def test_forceps_velocity_applier_uses_scene_camera_pose_when_provider_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     called: dict[str, int] = {"pose_reads": 0}
-    scene_pose = Pose(
-        position=Vec3(x=0.0, y=0.0, z=0.0),
-        rotation=Quaternion(
-            w=0.7071067811865475,
-            x=0.0,
-            y=0.0,
-            z=0.7071067811865475,
-        ),
-    )
 
     def _read_pose(_scene: Any) -> Pose:
         called["pose_reads"] += 1
-        return scene_pose
+        return Pose(
+            position=Vec3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+        )
 
     monkeypatch.setattr(sofa_tools, "_read_camera_pose", _read_pose)
 
     dof = _Dof()
+    applier = build_forceps_velocity_applier(
+        forceps_dof=dof,
+        tool_tip_offset_local=(0.0, 0.0, 0.0),
+        motion_shaping=_TEST_SHAPING,
+    )
+    tip = Pose(position=Vec3(x=0.01, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+    applier(None, _scene_pose_command(timestamp_ns=0, cycle_id=0, tip=tip))
+    applier(None, _scene_pose_command(timestamp_ns=1_000_000_000, cycle_id=5, tip=tip))
+    assert dof.v.value[0] == pytest.approx(0.01, abs=1e-9)
+    assert called["pose_reads"] == 0
+
+
+def test_forceps_velocity_applier_refuses_cartesian_twist_when_enabled() -> None:
+    dof = _Dof()
     applier = build_forceps_velocity_applier(forceps_dof=dof)
     cmd = RobotCommand(
-        timestamp_ns=1005,
-        cycle_id=5,
+        timestamp_ns=1,
+        cycle_id=0,
         control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=1.0, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
-        ),
+        cartesian_twist=Twist(linear=Vec3(x=1.0, y=0.0, z=0.0), angular=Vec3(x=0.0, y=0.0, z=0.0)),
+        frame=ControlFrame.CAMERA,
         enable=True,
         source="test",
     )
-    expected = _twist_camera_to_scene(
-        Twist(
-            linear=Vec3(x=0.01, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
-        ),
-        scene_pose,
-    )
-
-    applier(None, cmd)
-    assert dof.v.value[:3] == pytest.approx(expected[:3], abs=1e-12)
-    assert called["pose_reads"] == 1
+    with pytest.raises(UnsupportedControlModeError):
+        applier(None, cmd)
 
 
 def test_forceps_velocity_applier_refreshes_cache_across_scene_reset_and_tracks_jaw_seed() -> None:
     jaw_ref = {"jaw": 0.2}
-    applier = build_forceps_velocity_applier(forceps_dof=None, jaw_ref=jaw_ref)
+    applier = build_forceps_velocity_applier(
+        forceps_dof=None,
+        jaw_ref=jaw_ref,
+        tool_tip_offset_local=(0.0, 0.0, 0.0),
+        motion_shaping=_TEST_SHAPING,
+    )
 
     first_dof = _ForcepsDof((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
     first_left = _ForcepsClasper()
@@ -347,18 +343,10 @@ def test_forceps_velocity_applier_refreshes_cache_across_scene_reset_and_tracks_
             right=first_right,
         )
     )
-    reset_cmd = RobotCommand(
-        timestamp_ns=2_001,
-        cycle_id=101,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=1.0, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
-        ),
-        enable=True,
-        source="test",
-    )
+    tip = Pose(position=Vec3(x=0.01, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+    reset_cmd = _scene_pose_command(timestamp_ns=1_000_000_000, cycle_id=101, tip=tip)
 
+    applier(first_scene, _scene_pose_command(timestamp_ns=0, cycle_id=100, tip=tip))
     applier(first_scene, reset_cmd)
     first_left_transform = _clasper_visual_transform(jaw_ref["jaw"], side="left")
     first_right_transform = _clasper_visual_transform(jaw_ref["jaw"], side="right")
@@ -378,7 +366,8 @@ def test_forceps_velocity_applier_refreshes_cache_across_scene_reset_and_tracks_
             right=second_right,
         )
     )
-    applier(second_scene, reset_cmd)
+    applier(second_scene, _scene_pose_command(timestamp_ns=0, cycle_id=102, tip=tip))
+    applier(second_scene, _scene_pose_command(timestamp_ns=1_000_000_000, cycle_id=103, tip=tip))
 
     second_left_transform = _clasper_visual_transform(jaw_ref["jaw"], side="left")
     second_right_transform = _clasper_visual_transform(jaw_ref["jaw"], side="right")
@@ -387,7 +376,9 @@ def test_forceps_velocity_applier_refreshes_cache_across_scene_reset_and_tracks_
     assert second_right.rotation.value == pytest.approx(list(second_right_transform.euler_xyz))
     assert first_left.rotation.value == pytest.approx(list(first_left_transform.euler_xyz))
 
-    jaw_update_cmd = reset_cmd.model_copy(update={"tool_jaw_target": 0.77})
+    jaw_update_cmd = _scene_pose_command(timestamp_ns=2_000_000_000, cycle_id=104, tip=tip).model_copy(
+        update={"tool_jaw_target": 0.77},
+    )
     applier(second_scene, jaw_update_cmd)
     updated_left_transform = _clasper_visual_transform(0.77, side="left")
     updated_right_transform = _clasper_visual_transform(0.77, side="right")
@@ -417,15 +408,16 @@ def test_forceps_velocity_applier_and_observer_use_factory_handles() -> None:
         clasp.translation = _Data((0.0, 0.0, 0.0))
         clasp.rotation = _Data((0.0, 0.0, 0.0, 1.0))
 
-    applier = build_forceps_velocity_applier(forceps_dof=dof)
+    applier = build_forceps_velocity_applier(forceps_dof=dof, motion_shaping=_TEST_SHAPING, tool_tip_offset_local=(0.0, 0.0, 0.0))
     cmd = RobotCommand(
         timestamp_ns=1003,
         cycle_id=3,
-        control_mode=ControlMode.CARTESIAN_TWIST,
-        cartesian_twist=Twist(
-            linear=Vec3(x=0.0, y=0.0, z=0.0),
-            angular=Vec3(x=0.0, y=0.0, z=0.0),
+        control_mode=ControlMode.CARTESIAN_POSE,
+        cartesian_pose_target=Pose(
+            position=Vec3(x=0.0, y=0.0, z=0.0),
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
+        frame=ControlFrame.SCENE,
         enable=False,
         tool_jaw_target=0.4,
         source="test",
@@ -436,8 +428,8 @@ def test_forceps_velocity_applier_and_observer_use_factory_handles() -> None:
 
     left_transform = _clasper_visual_transform(0.4, side="left")
     right_transform = _clasper_visual_transform(0.4, side="right")
-    assert left.rotation.value == pytest.approx(list(left_transform.euler_xyz))
-    assert right.rotation.value == pytest.approx(list(right_transform.euler_xyz))
+    assert left.rotation.value[:3] == pytest.approx(list(left_transform.euler_xyz))
+    assert right.rotation.value[:3] == pytest.approx(list(right_transform.euler_xyz))
 
     dof.velocity = _Data([0.11, -0.22, 0.33, 0.01, 0.02, -0.03])
     observer = build_forceps_observer(dof=dof)
@@ -605,46 +597,13 @@ def test_forceps_observer_reports_wrench_and_keeps_contact_conservative() -> Non
     assert state.in_contact is False
 
 
-def test_camera_to_scene_linear_twist_transform_applies_rotation() -> None:
-    pose = Pose(
-        position=Vec3(x=0.0, y=0.0, z=0.0),
-        rotation=Quaternion(
-            w=0.7071067811865475,
-            x=0.0,
-            y=0.0,
-            z=0.7071067811865475,
-        ),
-    )
-    transformed = _twist_camera_to_scene(
-        Twist(linear=Vec3(x=1.0, y=0.0, z=0.0), angular=Vec3(x=0.0, y=0.0, z=0.0)),
-        pose,
-    )
-    assert transformed[0] == pytest.approx(0.0)
-    assert transformed[1] == pytest.approx(1.0)
-    assert transformed[2] == pytest.approx(0.0)
-
-
-def test_shaft_origin_twist_from_tip_shift_uses_omega_cross_r() -> None:
-    shaft_pose = Pose(position=Vec3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
-    twist_tip_scene = (0.0, 0.0, 0.02, 0.0, 0.0, 1.0)
-    tip_offset_local = (0.0, 0.1, 0.0)
-    shifted = _shaft_origin_twist_from_tip_twist(twist_tip_scene, shaft_pose, tip_offset_local)
-
-    expected_linear = (
-        twist_tip_scene[0]
-        - (twist_tip_scene[4] * tip_offset_local[2] - twist_tip_scene[5] * tip_offset_local[1]),
-        twist_tip_scene[1]
-        - (twist_tip_scene[5] * tip_offset_local[0] - twist_tip_scene[3] * tip_offset_local[2]),
-        twist_tip_scene[2]
-        - (twist_tip_scene[3] * tip_offset_local[1] - twist_tip_scene[4] * tip_offset_local[0]),
-    )
-
-    assert shifted[0] == pytest.approx(expected_linear[0], abs=1e-12)
-    assert shifted[1] == pytest.approx(expected_linear[1], abs=1e-12)
-    assert shifted[2] == pytest.approx(expected_linear[2], abs=1e-12)
-    assert shifted[3] == twist_tip_scene[3]
-    assert shifted[4] == twist_tip_scene[4]
-    assert shifted[5] == twist_tip_scene[5]
+def test_shaft_pose_from_tip_target_with_zero_offset_matches_tip() -> None:
+    tip = Pose(position=Vec3(x=1.0, y=2.0, z=3.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+    shaft_m = Pose(position=Vec3(x=0.0, y=0.0, z=0.0), rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0))
+    shaft_t = shaft_pose_from_tip_target(tip, shaft_m, (0.0, 0.0, 0.0))
+    assert shaft_t.position.x == pytest.approx(1.0)
+    assert shaft_t.position.y == pytest.approx(2.0)
+    assert shaft_t.position.z == pytest.approx(3.0)
 
 
 def test_create_forceps_node_prefers_loaded_contract_defaults_over_hardcoded(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3,11 +3,11 @@
 | Field | Value |
 |---|---|
 | Date | 2026-05-12 |
-| Status | Approved (design); implementation pending |
+| Status | Approved (design); **implemented** with collapsed primitives (see §3.1). **SOFA path:** generator emits `CARTESIAN_POSE` in `SCENE` frame (`cartesian_pose_target`); SOFA applier uses pose-error servo (see `docs/UNITS.md`). Legacy `evaluate()` still exposes `twist_camera` for jaw / finish bookkeeping. |
 | Piece | 3 of 5 (in the simulation-pipeline redesign) |
 | Depends on | `docs/specs/2026-05-12-command-schema-and-env-step-contract-design.md` (piece 1), `docs/specs/2026-05-12-physical-forceps-design.md` (piece 2) |
 | Supersedes | `src/auto_surgery/env/action_generators.py` (sine + random-walk joint generators) and the `_build_action` / `--joint-*` CLI in `src/auto_surgery/recording/brain_forceps.py` |
-| Backward compatibility | **None.** Piece 1 is the new floor; this piece emits `CARTESIAN_TWIST` directly. |
+| Backward compatibility | **None** for command schema (piece 1). Motion YAML may still use legacy primitive-weight / duration key names; `MotionGeneratorConfig` normalizes them at load time (see `src/auto_surgery/schemas/motion.py`). |
 
 ---
 
@@ -18,8 +18,8 @@ Piece 1 made `RobotCommand(CARTESIAN_TWIST in CAMERA)` the action a real robot, 
 Piece 3 replaces that with a **scene-aware motion generator** that:
 
 1. Emits `RobotCommand(CARTESIAN_TWIST in CAMERA)` at the control rate (250 Hz default), one command per `env.step()`.
-2. Produces surgeon-like trajectories: bounded-jerk velocity profiles, recognisable phases of motion (approach, dwell, retract, sweep, rotate, probe), and visible jaw open/close coordinated with motion.
-3. Reads `ToolState.in_contact`, `ToolState.pose`, and the camera extrinsics from the per-tick `StepResult` to react to what is actually happening in the scene — `Approach` early-terminates on contact, `Probe` hold-then-retracts on contact, etc.
+2. Produces surgeon-like trajectories: bounded-jerk velocity profiles, recognisable phases of motion (`Reach`, `Hold`, `Drag`, `Brush`, `Grip`, `ContactReach`), and visible jaw open/close coordinated with motion.
+3. Reads `ToolState.in_contact`, `ToolState.pose`, and the camera extrinsics from the per-tick `StepResult` to react to what is actually happening in the scene — `Reach` early-terminates on contact, `Grip` handles contact-aware jaw handling, and `ContactReach` ends once contact is reliable.
 4. Is parameterised by a typed `MotionGeneratorConfig` and a typed `SceneConfig.target_volumes`, both surfaced through pydantic YAML so the recorder CLI, piece 4's domain randomisation, and unit tests share the same configuration surface.
 5. Records the realised primitive sequence (with parameters and contact-event timing) alongside the video/command stream, so piece 5's recorder can ship paired (motion-label, video) artefacts.
 
@@ -52,6 +52,22 @@ This is **piece 3 of 5**:
 6. **Replay of a fixed motion plan across scene seeds.** Recorded manifests are introspection-only in v1.
 7. **Per-tool primitive variants.** v1 ships one primitive set sized for `dejavu_forceps`. Tool-specific primitives (e.g., a `Cut` for scissors) are gated on the tool catalog expanding (piece 2 §11 trigger).
 
+### 3.1 Implementation snapshot (2026-05)
+
+Runtime code in `src/auto_surgery/motion/` uses a **collapsed** primitive set: `Reach`, `Hold`, `ContactReach`, `Grip`, `Drag`, `Brush` (see `src/auto_surgery/motion/primitives.py`).
+
+| Original spec name | Implemented as |
+|--------------------|----------------|
+| `Approach` | `Reach` |
+| `Dwell` | `Hold` |
+| `Retract` | `Drag` (scene-mm distances) |
+| `Sweep` / `Rotate` | `Brush` / `Grip` |
+| `Probe` | `ContactReach` + `Grip` |
+
+Canonical motion YAML keys are `weight_reach`, `reach_duration_range_s`, `hold_duration_range_s`, `drag_duration_range_s`, `brush_duration_range_s`, etc. (`configs/motion/default.yaml`). Legacy keys are still accepted at load time and normalized in `MotionGeneratorConfig`.
+
+The FSM in `src/auto_surgery/motion/fsm.py` ends `Reach` early on a contact rising edge when `end_on_contact=True`; other primitives end on elapsed time only.
+
 ---
 
 ## 4. Foundational design decisions
@@ -63,8 +79,8 @@ Trajectories are built from a typed set of motion primitives, each a frozen data
 Why primitives over stochastic process or spline waypoints:
 
 - **Stochastic process** (OU / coloured noise tuned to surgical-motion spectrum) requires a recorded surgeon corpus to fit the spectrum to. We have no such corpus. The primitive approach uses hand-specified, well-understood velocity profiles that produce plausible motion without needing data.
-- **Spline waypoint** planner pre-plans the entire episode, which makes contact-reactivity (`Approach` early-terminating, `Probe` holding-then-retracting) an awkward replanning step. Primitive FSM treats contact reactivity as a first-class transition.
-- **Primitive FSM** matches the verbal model of surgical motion ("approach + dwell + retract + sweep, anchored on contact"). Each primitive is a pure function `(state, elapsed) → Twist` that is unit-testable without SOFA. The FSM is a separate unit, also unit-testable with synthetic `StepResult` streams.
+- **Spline waypoint** planner pre-plans the entire episode, which makes contact-reactivity (`Reach` early-terminating, `ContactReach`/`Grip` contact handling) an awkward replanning step. Primitive FSM treats contact reactivity as a first-class transition.
+- **Primitive FSM** matches the verbal model of surgical motion ("reach/hold/drag/brush/grip/contact"), with contact-anchored early termination where implemented. Each primitive is a pure function `(state, elapsed) → Twist` that is unit-testable without SOFA. The FSM is a separate unit, also unit-testable with synthetic `StepResult` streams.
 
 ### 4.2 Minimum-jerk velocity profile
 
@@ -80,7 +96,7 @@ Why minimum-jerk over raised cosine, trapezoidal, or S-curve:
 
 - It's the canonical model of human limb motion in the motor-control literature. Closest to what real surgeon footage shows.
 - Closed-form polynomial. Analytical derivative gives the per-tick twist directly; no numerical differentiation, no per-tick integration of position-tracking error.
-- Two-point boundary conditions (start pose, end pose, duration) — same uniform shape across every primitive that has a target. Sweep / Rotate / Dwell apply the same profile to angular displacement / zero displacement.
+- Two-point boundary conditions (start pose, end pose, duration) — same uniform shape across every primitive that has a target pose sample. Brush/Grip uses derived phase timings in addition to those base profile constraints.
 - Bounded jerk is what the IDM expects from real surgical footage. Trapezoidal velocity profiles produce visible "corners" in the rendered motion that would teach the IDM the wrong distribution.
 
 ### 4.3 `SceneConfig.target_volumes` (multi-scene-ready)
@@ -88,7 +104,7 @@ Why minimum-jerk over raised cosine, trapezoidal, or S-curve:
 Piece 2 introduced `SceneConfig`. Piece 3 amends two of its fields:
 
 - **Rename** `brain_scene_path → tissue_scene_path`. The current name is brain-specific; we want the typed surface ready for kidney, liver, uterus, and any other DejaVu scene without renaming twice.
-- **Add** `target_volumes: list[TargetVolume]` (`min_length=1`). Each `TargetVolume` is a small region in scene frame (sphere or bbox) with a semantic label (`"tumor" | "vessel" | "general"`) that marks where surgical work happens. Tissue-seeking primitives (`Approach`, `Probe`) sample target points inside one of these volumes; non-tissue primitives (`Sweep`, `Rotate`, `Retract`) operate in camera frame and don't read the volumes.
+- **Add** `target_volumes: list[TargetVolume]` (`min_length=1`). Each `TargetVolume` is a small region in scene frame (sphere or bbox) with a semantic label (`"tumor" | "vessel" | "general"`) that marks where surgical work happens. Tissue-seeking primitives (`Reach`, `ContactReach`, `Grip`) sample target points inside one of these volumes; non-tissue primitives (`Brush`, `Drag`) operate in camera frame and don't read the volumes.
 
 v1 ships exactly the brain scene's `SceneConfig` with one `TargetVolume` (label `"general"`) covering the exposed cortex. Adding kidney/liver/uterus later is a pure config addition: a new YAML file, a new `tissue_scene_path`, and a new list of `target_volumes`. No code change. Piece 4's domain randomisation can perturb the `target_volume.center_scene` per episode.
 
@@ -152,7 +168,7 @@ The five-module split exists because each piece has a single responsibility that
 class TargetVolume(BaseModel):
     """Region of surgical interest in scene frame.
 
-    Tissue-seeking primitives (Approach, Probe) sample target points inside
+    Tissue-seeking primitives (`Reach`, `ContactReach`) sample target points inside
     a TargetVolume. Non-tissue primitives operate in camera frame and ignore
     target_volumes.
     """
@@ -174,106 +190,50 @@ class SceneConfig(BaseModel):
 
 Both renames / additions are a tiny amendment to piece 2's design; piece-2 logic does not depend on either field's name or list-ness.
 
-#### 5.2.2 Primitive dataclasses
+#### 5.2.2 Primitive dataclasses (implemented)
+
+The authoritative definitions live in `src/auto_surgery/motion/primitives.py`. Summary:
 
 ```python
-# src/auto_surgery/motion/primitives.py
-
 class PrimitiveKind(StrEnum):
-    APPROACH = "approach"
-    DWELL = "dwell"
-    RETRACT = "retract"
-    SWEEP = "sweep"
-    ROTATE = "rotate"
-    PROBE = "probe"
+    REACH = "reach"
+    HOLD = "hold"
+    CONTACT_REACH = "contact_reach"
+    GRIP = "grip"
+    DRAG = "drag"
+    BRUSH = "brush"
 
-
-@dataclass(frozen=True)
-class _CommonParams:
-    duration_s: float                       # nominal duration; primitive may early-terminate
-    jaw_target_start: float | None          # None = hold last commanded jaw
-    jaw_target_end: float | None            # None = hold last commanded jaw
-
-
-@dataclass(frozen=True)
-class Approach(_CommonParams):
-    target_pose_scene: Pose                 # tool-tip pose at end
-    end_on_contact: bool = True             # early-terminate on tool.in_contact rising edge
-
-
-@dataclass(frozen=True)
-class Dwell(_CommonParams):
-    pass                                    # zero twist; jaw still interpolates
-
-
-@dataclass(frozen=True)
-class Retract(_CommonParams):
-    distance_m: float                       # along negative camera-z (away from tissue)
-
-
-@dataclass(frozen=True)
-class Sweep(_CommonParams):
-    axis_camera: Vec3                       # rotation axis in camera frame (unit)
-    arc_radians: float                      # signed total arc
-
-
-@dataclass(frozen=True)
-class Rotate(_CommonParams):
-    axis_camera: Vec3                       # tool-tip-fixed rotation axis (camera frame, unit)
-    angle_radians: float                    # signed total angle
-
-
-@dataclass(frozen=True)
-class Probe(_CommonParams):
-    target_pose_scene: Pose
-    hold_after_contact_s: float = 0.3
-    retract_distance_m: float = 0.005
-
-
-Primitive = Approach | Dwell | Retract | Sweep | Rotate | Probe
+Primitive = Reach | Hold | ContactReach | Grip | Drag | Brush
 ```
 
-The union is exhaustive-match-checked by `fsm.py`. Adding a 7th primitive later is one new dataclass + one new match arm in the FSM.
+`evaluate(active, last_step) → PrimitiveOutput` emits twists in **camera frame** for the command contract; the generator converts to scene frame where needed for shaping, then back to camera frame in `RobotCommand`.
 
 #### 5.2.3 `MotionGeneratorConfig`
 
-```python
-# src/auto_surgery/motion/generator.py
+Authoritative schema: `src/auto_surgery/schemas/motion.py`. Weights and duration ranges use **canonical** names aligned with `PrimitiveKind` (`weight_reach`, `reach_duration_range_s`, `hold_duration_range_s`, `drag_duration_range_s`, `brush_duration_range_s`, …). Legacy YAML keys from earlier drafts (`weight_approach`, `approach_duration_range_s`, …) are normalized at model load.
 
+```python
 class MotionGeneratorConfig(BaseModel):
-    """Per-episode randomisation knobs. All defaults are tuned during the
-    visual smoke test; the same calibration gate from piece 2 §9.4 applies."""
     model_config = {"extra": "forbid"}
     seed: int = 0
-
-    # Sequence shape
     primitive_count_min: int = 8
     primitive_count_max: int = 20
 
-    # Primitive selection weights (un-normalised)
-    weight_approach: float = 1.0
-    weight_dwell: float = 0.5
-    weight_retract: float = 0.7
-    weight_sweep: float = 0.6
-    weight_rotate: float = 0.4
-    weight_probe: float = 0.8
+    weight_reach: float = 1.0
+    weight_hold: float = 0.5
+    weight_contact_reach: float = 0.7
+    weight_grip: float = 0.8
+    weight_drag: float = 0.6
+    weight_brush: float = 0.4
 
-    # Per-primitive parameter ranges (SI units)
-    approach_duration_range_s: tuple[float, float] = (0.6, 1.5)
-    dwell_duration_range_s: tuple[float, float] = (0.3, 0.8)
-    retract_duration_range_s: tuple[float, float] = (0.4, 0.9)
-    retract_distance_range_m: tuple[float, float] = (0.003, 0.012)
-    sweep_duration_range_s: tuple[float, float] = (0.6, 1.4)
-    sweep_arc_range_rad: tuple[float, float] = (0.15, 0.6)
-    rotate_duration_range_s: tuple[float, float] = (0.5, 1.2)
-    rotate_angle_range_rad: tuple[float, float] = (0.2, 0.8)
-    probe_duration_range_s: tuple[float, float] = (0.6, 1.4)
-    probe_hold_range_s: tuple[float, float] = (0.15, 0.45)
-
-    # Orientation perturbation applied to Approach / Probe target rotations
-    target_orientation_jitter_rad: float = 0.26   # ~15° per axis
-
-    # Jaw randomisation
+    reach_duration_range_s: tuple[float, float] = (0.6, 1.5)
+    hold_duration_range_s: tuple[float, float] = (0.3, 0.8)
+    drag_duration_range_s: tuple[float, float] = (0.4, 0.9)
+    drag_distance_range_mm: tuple[float, float] = (3.0, 12.0)
+    brush_duration_range_s: tuple[float, float] = (0.6, 1.4)
+    brush_arc_range_rad: tuple[float, float] = (0.15, 0.6)
+    # … reserved / future knobs (rotate_*, probe_*) …
+    target_orientation_jitter_rad: float = 0.26
     jaw_value_range: tuple[float, float] = (0.0, 1.0)
     jaw_change_probability: float = 0.4
 ```
@@ -292,8 +252,6 @@ class _ActivePrimitive:
     duration_s: float
     elapsed_s: float = 0.0
     contact_was_in: bool = False
-    in_post_contact_phase: bool = False     # Probe only
-    post_contact_started_at_s: float = 0.0  # Probe only
 ```
 
 #### 5.2.5 Realised primitive record
@@ -370,32 +328,32 @@ Boundary properties (relied on by primitives and verified by unit tests):
 
 | Primitive | Linear twist (scene frame) | Angular twist (scene frame) | Contact reaction |
 |---|---|---|---|
-| `Approach(target_pose_scene)` | $(\mathrm{target\_pos} - \mathrm{started\_pos}) \cdot v(\tau, T)$ | $\log(R_{\mathrm{target}} \cdot R_{\mathrm{started}}^{-1}) \cdot v(\tau, T)$ | `is_finished=True` on `tool.in_contact` rising edge if `end_on_contact=True` |
-| `Dwell` | $0$ | $0$ | None |
-| `Retract(distance_m)` | $\mathrm{distance\_m} \cdot \hat{z}_{\mathrm{camera, scene}} \cdot v(\tau, T)$ (negative camera z, expressed in scene frame) | $0$ | None |
-| `Sweep(axis_camera, arc_radians)` | $0$ | $\mathrm{axis\_camera\_scene} \cdot \mathrm{arc\_radians} \cdot v(\tau, T)$ | None |
-| `Rotate(axis_camera, angle_radians)` | $0$ | $\mathrm{axis\_camera\_scene} \cdot \mathrm{angle\_radians} \cdot v(\tau, T)$ | None |
-| `Probe(target)` | See §6.3 | See §6.3 | Phase transition (not "finished") |
+| `Reach(target_pose_scene)` | $(\mathrm{target\_pos} - \mathrm{started\_pos}) \cdot v(\tau, T)$ | $\log(R_{\mathrm{target}} \cdot R_{\mathrm{started}}^{-1}) \cdot v(\tau, T)$ | `is_finished=True` on `tool.in_contact` rising edge if `end_on_contact=True`. |
+| `Hold` | $0$ | $0$ | None |
+| `Drag(distance_mm)` | incremental tangential delta from preferred workspace direction: `distance_mm / duration_s * v(tick_dt, duration_s)` (feedback-corrected by normal-force term) | $0$ | None |
+| `Brush(amplitude_mm, frequency_hz)` | tangential sinusoidal path in workspace | tangential rotational component encoded as an equivalent scene-frame angular velocity | None |
+| `ContactReach` | See below | See below | Contact or timeout finish |
+| `Grip` | Piecewise path: `ContactReach` + lift-up + settle-back | piecewise hold + settle | Contact start flips to the lift phase; primitive finishes after hold/lift/release duration |
 
 The output twist is computed in scene frame, then transformed to camera frame at output time using `last_step.cameras[0].extrinsics`. The action applier in piece 2 §6.2 transforms it back to scene frame. The round trip is intentional: the published command matches what an IDM seeing the same camera frame would predict, which is the IDM training-time invariant.
 
-For `Sweep` and `Rotate`, the axis is specified in camera frame (since that's the IDM's reference frame); the angular velocity output is transformed to camera frame at output time alongside the linear component (the generator's external contract is `Twist` in camera frame; internal computations may be in scene frame for the rotation-vector composition `axis_scene = R_scene_camera · axis_camera`).
+For `Drag` and `Brush`, direction vectors are specified in scene frame after rotation, with tangential fallback around the tool camera-frame axis when needed. The generated angular velocity is transformed to camera frame at output time (the generator's external contract is `Twist` in camera frame).
 
-**Camera-frame convention**: this spec assumes OpenCV convention — camera `+z` along the optical axis (into the scene), `+x` right, `+y` down. "Camera `−z`" therefore means "away from the scene toward the viewer", which is the intended retract direction. `Vec3` fields representing axes in camera frame (`Sweep.axis_camera`, `Rotate.axis_camera`) are validated unit-norm (within $10^{-6}$); the sequencer normalises before construction.
+**Camera-frame convention**: this spec assumes OpenCV convention — camera `+z` along the optical axis (into the scene), `+x` right, `+y` down. "Camera `−z`" therefore means "away from the scene toward the viewer".
 
-### 6.3 `Probe` sub-phases
+### 6.3 `ContactReach` and `Grip` behavior
 
-`Probe` has three internal phases driven by elapsed time and contact:
+`ContactReach` has one active phase: directional search until contact or timeout. Its evaluator moves toward a target sample defined by `direction_hint_scene`, `max_search_mm`, and `peak_speed_mm_per_s`; contact and geometry distance thresholds can both trigger finish.
 
-1. **Approach phase** (until `tool.in_contact` rising edge): identical to `Approach.evaluate` with the same target.
-2. **Hold phase** (`hold_after_contact_s` seconds after contact): zero twist; jaw interpolates toward `jaw_target_end`.
-3. **Retract phase** (remaining duration, but at least enough to cover `retract_distance_m`): translation along camera $-z$ at minimum-jerk speed; zero rotation.
+`Grip` is a scripted wrapper around a `ContactReach` approach:
 
-`Probe.is_finished` returns True iff phase 3's retract motion has completed (hold-duration plus retract-duration since contact). If contact never occurs, Probe finishes when `elapsed_s >= duration_s` (the primitive gives up on reaching the target). Contact flicker during retract is ignored (phase 3 is monotonic).
+1. `ContactReach` phase (approach toward the workpiece).
+2. Jaw closing phase (`jaw_close_duration_s`).
+3. Lift phase (`lift_distance_mm`, `lift_duration_s`).
+4. Release phase (`release_after_s`).
+5. Final settle (remaining duration).
 
-The retract direction is camera $-z$ (away from the scene), **not** the negative of the approach vector. This avoids the pathological case where the approach came in from below and a "negative approach" retract would back into the camera.
-
-**Duration guarantee**: the sequencer constructs `Probe.duration_s` such that, *after* contact rises, there is always enough remaining time to complete `hold_after_contact_s` + the minimum-jerk retract over `retract_distance_m`. Concretely the sequencer sets `duration_s = sampled_approach_time + hold_after_contact_s + retract_min_time + safety_margin`, where `retract_min_time` is derived from `retract_distance_m` and a configured peak retract velocity (default $0.03\,\mathrm{m/s}$). This eliminates the need for the FSM to special-case "Probe ran out of time mid-retract".
+The wrapper keeps a single primitive clock and reports finished only after the hold/lift/reopen/settle path is complete.
 
 ### 6.4 Jaw interpolation
 
@@ -425,15 +383,15 @@ def reset(self, initial_step: StepResult) -> None:
     self._issued = 0
 ```
 
-The first primitive (returned by the first `next_primitive` call) is deterministically an `Approach` toward the centre of `scene_config.target_volumes[0]` with the configured `approach_duration_range_s` mid-point. This makes episode start a predictable glide into the operating zone rather than a random twitch — useful for video readability and as a deterministic anchor for test fixtures.
+The first primitive (returned by the first `next_primitive` call) is deterministically a `Reach` toward the centre of `scene_config.target_volumes[0]` with the configured `reach_duration_range_s` midpoint. This makes episode start a predictable glide into the operating zone rather than a random twitch — useful for video readability and as a deterministic anchor for test fixtures.
 
 ### 7.2 `next_primitive(last_step, last_jaw) → Primitive | None`
 
-If `self._issued >= self._planned_count`, return None — the FSM converts this into an indefinite zero-twist `Dwell` (the episode has run out of planned motion but `env.step` may still be called).
+If `self._issued >= self._planned_count`, return None — the FSM converts this into an indefinite zero-twist `Hold` (the episode has run out of planned motion but `env.step` may still be called).
 
 Otherwise:
 
-1. Sample primitive kind: weighted choice from `{Approach, Dwell, Retract, Sweep, Rotate, Probe}` using `motion_config.weight_*`.
+1. Sample primitive kind: weighted choice from `{Reach, Hold, Drag, Brush, Grip, ContactReach}` using `motion_config.weight_*`.
 2. Build the primitive variant with sampled parameters (see §7.3).
 3. Sample jaw endpoints:
    - With probability `motion_config.jaw_change_probability`: `jaw_target_end = uniform(jaw_value_range)`, `jaw_target_start = None` (use `started_at_jaw`).
@@ -445,14 +403,14 @@ Otherwise:
 
 | Kind | Parameter sampling |
 |---|---|
-| `Approach` | `target_pose_scene.position` = uniform point inside a `TargetVolume` sampled uniformly from `scene_config.target_volumes`. `target_pose_scene.rotation` = current tool rotation perturbed by Euler angles drawn from `Uniform(-target_orientation_jitter_rad, target_orientation_jitter_rad)` per axis. `duration_s` = uniform from `approach_duration_range_s`. `end_on_contact = True`. |
-| `Dwell` | `duration_s` = uniform from `dwell_duration_range_s`. |
-| `Retract` | `distance_m` = uniform from `retract_distance_range_m`. `duration_s` = uniform from `retract_duration_range_s`. |
-| `Sweep` | `axis_camera` = random unit vector biased toward camera up/right (sampled in the camera-frame $xy$ plane plus a small $z$ component, then normalised). `arc_radians` = signed uniform sample from $\pm\,\mathrm{sweep\_arc\_range\_rad}$. `duration_s` = uniform from `sweep_duration_range_s`. |
-| `Rotate` | `axis_camera` = uniform unit vector (no bias). `angle_radians` = signed uniform from $\pm\,\mathrm{rotate\_angle\_range\_rad}$. `duration_s` = uniform from `rotate_duration_range_s`. |
-| `Probe` | Same as `Approach` for target sampling. `hold_after_contact_s` = uniform from `probe_hold_range_s`. `retract_distance_m` = uniform from `retract_distance_range_m`. `duration_s` is derived (not sampled directly) per §6.3's duration guarantee: `approach_time + hold + retract_min_time + safety_margin`, where `approach_time` is sampled from `probe_duration_range_s`. |
+| `Reach` | `target_pose_scene.position` = uniform point inside a `TargetVolume` sampled uniformly from `scene_config.target_volumes`. `target_pose_scene.rotation` = current tool rotation perturbed by Euler angles drawn from `Uniform(-target_orientation_jitter_rad, target_orientation_jitter_rad)` per axis. `duration_s` = uniform from `reach_duration_range_s`. `end_on_contact = True`. |
+| `Hold` | `duration_s` = uniform from `hold_duration_range_s`. |
+| `Drag` | `distance_mm` = uniform from `drag_distance_range_mm`; `direction_hint_scene` uses contact-space sampling preference; `duration_s` = uniform from `drag_duration_range_s`. |
+| `Brush` | `amplitude_mm` and `frequency_hz` are fixed in implementation today; `duration_s` = uniform from `brush_duration_range_s`. |
+| `Grip` | `approach = _build_contact_reach(last_step)`; `lift_distance_mm`, `lift_duration_s`, `jaw_close_duration_s`, `release_after_s` are fixed; `duration_s = sampled_range(reach_duration_range_s) + 1.8`. |
+| `ContactReach` | `direction_hint_scene = None`; `max_search_mm = 10.0`; `peak_speed_mm_per_s = 15.0`; `duration_s` = uniform from `reach_duration_range_s`. |
 
-The `Sweep` axis bias prevents sweeps along the optical axis (which would look like zooming, not sweeping) by drawing the in-plane component first and adding a small out-of-plane component. The exact bias formula is unit-tested.
+The `Brush` axis bias prevents sweeps along the optical axis (which would look like zooming, not brushing) by drawing the in-plane component first and adding a small out-of-plane component. The exact bias formula is unit-tested.
 
 ### 7.4 Lazy sampling
 
@@ -469,8 +427,8 @@ def step(self, last_step: StepResult, last_command_jaw: float) -> _ActivePrimiti
     if self._active is None or self._active_finished(last_step):
         self._record_finished_if_any(last_step.sim_step_index)
         next_p = self._sequencer.next_primitive(last_step, last_command_jaw)
-        if next_p is None:
-            next_p = Dwell(
+            if next_p is None:
+                next_p = Hold(
                 duration_s=1e9,
                 jaw_target_start=None,
                 jaw_target_end=None,
@@ -499,24 +457,13 @@ def _active_finished(self, last_step: StepResult) -> bool:
     active.contact_was_in = contact_now
 
     match active.primitive:
-        case Probe() if contact_rising and not active.in_post_contact_phase:
-            # Pre-contact -> post-contact phase transition (not a finish)
-            active.in_post_contact_phase = True
-            active.post_contact_started_at_s = active.elapsed_s
-            return False
-        case Probe() if active.in_post_contact_phase:
-            elapsed_since_contact = active.elapsed_s - active.post_contact_started_at_s
-            hold = active.primitive.hold_after_contact_s
-            return elapsed_since_contact >= hold + _probe_retract_time(active.primitive)
-        case Approach(end_on_contact=True) if contact_rising:
+        case Reach(end_on_contact=True) if contact_rising:
             return True
         case _:
             return active.elapsed_s >= active.duration_s
 ```
 
-The match arms must be checked in this order: Probe-in-post-contact must beat the generic duration-timeout fallback, otherwise a Probe whose `duration_s` happened to elapse during the retract phase would prematurely finish before completing its retract. The sequencer's duration guarantee (§6.3) makes this safe: post-contact phase always has enough remaining time.
-
-The `_probe_retract_time(primitive)` helper is a small pure function: given `retract_distance_m` and the configured peak retract velocity, return the minimum-jerk retract duration. Used both by the sequencer (to size `Probe.duration_s`) and by the FSM (to decide when post-contact phase is done) — single source of truth.
+The match arms are intentionally minimal: the only early-contact finish path is `Reach` with `end_on_contact=True`. All other primitives finish on elapsed time alone.
 
 ### 8.3 Realised-primitive logging
 
@@ -657,9 +604,9 @@ Four layers, ordered by speed.
   - Monotonicity of `min_jerk_position_scalar` on $[0,1]$.
   - Peak velocity at $\tau = 0.5$.
 - `primitives.py`:
-  - For each variant (`Approach`, `Dwell`, `Retract`, `Sweep`, `Rotate`, `Probe`), feed canned `_ActivePrimitive` + canned `last_step.sensors`, assert returned twist matches analytical expectation at $\tau \in \{0, 0.25, 0.5, 0.75, 1.0\}$.
-  - `Approach.end_on_contact=True`: rising edge of `tool.in_contact` returns `is_finished=True`.
-  - `Probe`: sub-phase transitions on contact; retract phase ignores subsequent contact flicker.
+  - For each variant (`Reach`, `Hold`, `Drag`, `Brush`, `ContactReach`, `Grip`), feed canned `_ActivePrimitive` + canned `last_step.sensors`, assert returned twist matches analytical expectation at $\tau \in \{0, 0.25, 0.5, 0.75, 1.0\}$.
+  - `Reach(end_on_contact=True)`: rising edge of `tool.in_contact` returns `is_finished=True`.
+  - `Grip`: verify close/lift/release/settle phase progression and contact-aware behavior.
   - Jaw interpolation: `(jaw_start=None, jaw_end=None)` → constant `started_at_jaw`. `(0.2, 0.8)` → `0.5` at $\tau=0.5$.
 - `MotionGeneratorConfig` YAML: valid configs parse; malformed configs raise.
 - `SceneConfig` YAML with the amended fields: valid + `target_volumes` empty list rejected.
@@ -667,12 +614,12 @@ Four layers, ordered by speed.
 ### 11.2 Sequencer + FSM tests (no SOFA, synthetic StepResult stream)
 
 - Fixed seed → reproducible primitive sequence (kinds + parameters match a golden).
-- Contact rising-edge mid-`Approach` causes FSM to advance to the next primitive within one tick.
+- Contact rising-edge mid-`Reach` causes FSM to advance to the next primitive within one tick.
 - Lazy sampling: each `next_primitive` call sees the *current* `last_step.sensors.tool.pose` (verified by mocking the input stream).
-- Episode exhausts after `planned_count` primitives → subsequent calls return zero-twist `Dwell` commands.
-- `_active_finished` returns False on every tick within a `Dwell` of `duration_s = 1.0` for 999 ticks at 250 Hz, True on the 1000th.
-- Probe duration guarantee: sequencer-produced `Probe.duration_s ≥ approach_time + hold_after_contact_s + _probe_retract_time(primitive)` for every sampled probe across 100 seeds.
-- Probe post-contact handling: with synthetic stream where contact rises late (just before nominal `duration_s`), FSM does *not* finish the Probe until hold + retract complete — i.e., Probe survives past `duration_s` if needed.
+- Episode exhausts after `planned_count` primitives → subsequent calls return zero-twist `Hold` commands.
+- `_active_finished` returns False on every tick within a `Hold` of `duration_s = 1.0` for 999 ticks at 250 Hz, True on the 1000th.
+- Contact-aware sequencing in `Grip` holds until close/lift/release windows complete.
+- Contact edge handling: with synthetic stream where contact rises late, `Grip` does *not* terminate on the first flicker once scripted phases are active.
 - `finalize(last_step)` appends exactly one record corresponding to the currently-active primitive with `early_terminated=False`; second call is a no-op.
 
 ### 11.3 SOFA-backed integration test (uses the piece-2 forceps + brain scene)
@@ -680,7 +627,7 @@ Four layers, ordered by speed.
 - Run `SurgicalMotionGenerator` driving the env for ~500 ticks at 250 Hz.
 - Assert at least one tick has `tool.in_contact == True`.
 - Assert at least one tick has `||tool.wrench|| > 0.1` (threshold tuned to piece-2 penalty stiffness).
-- Assert `realised_sequence` contains at least one `Approach` or `Probe` with `early_terminated=True`.
+- Assert `realised_sequence` contains at least one `Reach` with `early_terminated=True`.
 - Assert every emitted command has `enable=True` and `control_mode=CARTESIAN_TWIST`.
 - Determinism: same `seed` + same `scene_config` + same SOFA build → byte-identical `realised_sequence`.
 
@@ -703,10 +650,10 @@ This is the **calibration acceptance gate** for the default values committed in 
 | Risk | Mitigation |
 |---|---|
 | **Primitive boundary discontinuities.** Min-jerk velocity is zero at $\tau=1$ and zero at $\tau=0$ of the next primitive, so velocity is C⁰-continuous; but acceleration may jump. | Acceptable for v1 — the tool is velocity-source, so an acceleration discontinuity in the command becomes a smooth physics response. If the smoke test reveals visible jerks, add a one-tick C¹ blend at primitive boundaries. |
-| **Targets sampled inside `TargetVolume` end up below the tissue surface.** | Acceptable: `Approach.end_on_contact=True` early-terminates before the target is reached; the velocity-source rigid body deflects naturally. Verified by integration test §11.3. |
-| **`Sweep` axis sampling produces sweeps that move the tool out of camera view.** | The sampler biases the axis toward camera up/right; arc magnitudes are capped to $0.6$ rad in the default config. If the smoke test shows out-of-frame sweeps, narrow the range. |
+| **Targets sampled inside `TargetVolume` end up below the tissue surface.** | Acceptable: `Reach(end_on_contact=True)` early-terminates before the target is reached; the velocity-source rigid body deflects naturally. Verified by integration test §11.3. |
+| **`Brush` axis sampling produces sweeps that move the tool out of camera view.** | The sampler biases tangential motion in camera frame; if it causes out-of-frame motion, reduce `brush_duration_range_s` and/or tangential amplitude. |
 | **RNG state desyncs if `reset()` is called mid-episode.** | `reset()` is the only legal start; subsequent `next_command()` calls use the same RNG. `next_command()` raises if called before `reset()`. |
-| **`Probe` retract phase tries to retract into the camera.** | Retract direction is camera $-z$ (away from the scene), not the negative of the approach vector. Enforced in `Probe.evaluate()` and unit-tested. |
+| **`Grip` scripted hold/lift sequencing becomes unstable.** | `Grip` phases are guarded by elapsed-time bounds and contact-aware transition logic; keep `jaw_close_duration_s`, `lift_duration_s`, and `release_after_s` within tuned ranges. |
 | **`SceneConfig.target_volumes` is empty.** | Pydantic `Field(..., min_length=1)`. Test §11.1 verifies rejection. |
 | **CLI YAML config files don't exist yet in the repo.** | Both `configs/scenes/dejavu_brain.yaml` and `configs/motion/default.yaml` are committed in the piece-3 implementation PR, hand-edited after smoke-test calibration. |
 | **The renamed `tissue_scene_path` field breaks any in-flight piece-2 work that reads `brain_scene_path`.** | Piece 2's implementation has not landed yet at the time of this spec. The rename lands in the same PR as piece 2's `SceneConfig` implementation; there is no rolling deprecation. |
