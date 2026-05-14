@@ -22,8 +22,8 @@ def test_safety_metadata_model_accepts_all_fields() -> None:
         biased_linear=True,
         biased_angular=False,
         scaled_by=0.75,
-        signed_distance_to_envelope_m=0.12,
-        signed_distance_to_surface_m=-0.04,
+        signed_distance_to_envelope_mm=0.12,
+        signed_distance_to_surface_mm=-0.04,
     )
 
     assert metadata.model_dump() == {
@@ -32,8 +32,8 @@ def test_safety_metadata_model_accepts_all_fields() -> None:
         "biased_linear": True,
         "biased_angular": False,
         "scaled_by": 0.75,
-        "signed_distance_to_envelope_m": 0.12,
-        "signed_distance_to_surface_m": -0.04,
+        "signed_distance_to_envelope_mm": 0.12,
+        "signed_distance_to_surface_mm": -0.04,
     }
 
 
@@ -56,8 +56,8 @@ def test_robot_command_with_safety_serializes() -> None:
         biased_linear=True,
         biased_angular=True,
         scaled_by=None,
-        signed_distance_to_envelope_m=0.25,
-        signed_distance_to_surface_m=0.18,
+        signed_distance_to_envelope_mm=0.25,
+        signed_distance_to_surface_mm=0.18,
     )
     command = RobotCommand(
         timestamp_ns=987_654_321,

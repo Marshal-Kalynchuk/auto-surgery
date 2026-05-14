@@ -288,7 +288,7 @@ class SofaEnvironment(Environment):
         distance_next = float(
             self._workspace_envelope.signed_distance_to_envelope(tip_next_scene)
         )
-        near_boundary = 0.5 * float(self._workspace_envelope.outer_margin_m)
+        near_boundary = 0.5 * float(self._workspace_envelope.outer_margin_mm)
 
         if distance_next < 0.0:
             command.safety = SafetyMetadata(
@@ -297,8 +297,8 @@ class SofaEnvironment(Environment):
                 biased_linear=False,
                 biased_angular=False,
                 scaled_by=None,
-                signed_distance_to_envelope_m=distance_next,
-                signed_distance_to_surface_m=None,
+                signed_distance_to_envelope_mm=distance_next,
+                signed_distance_to_surface_mm=None,
             )
             return True, "tip_outside_workspace_envelope"
 
@@ -330,10 +330,10 @@ class SofaEnvironment(Environment):
                         biased_linear=False,
                         biased_angular=False,
                         scaled_by=scale,
-                        signed_distance_to_envelope_m=float(
+                        signed_distance_to_envelope_mm=float(
                             self._workspace_envelope.signed_distance_to_envelope(scaled_tip_next_scene)
                         ),
-                        signed_distance_to_surface_m=None,
+                        signed_distance_to_surface_mm=None,
                     )
                     return False, None
 

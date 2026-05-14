@@ -18,10 +18,10 @@ class _MockSceneGeometry(SceneGeometry):
         del p_scene
         return 0.0
 
-    def ray_cast(self, origin: Vec3, direction: Vec3, max_distance_m: float) -> None:
+    def ray_cast(self, origin: Vec3, direction: Vec3, max_distance_mm: float) -> None:
         del origin
         del direction
-        del max_distance_m
+        del max_distance_mm
         return None
 
     def bounds(self) -> tuple[Vec3, Vec3]:
@@ -65,12 +65,12 @@ def _sequencer_config(seed: int = 42) -> MotionGeneratorConfig:
         seed=seed,
         primitive_count_min=1,
         primitive_count_max=1,
-        approach_duration_range_s=(0.2, 0.2),
-        dwell_duration_range_s=(0.2, 0.2),
-        retract_duration_range_s=(0.2, 0.2),
-        retract_distance_range_m=(0.0, 0.0),
-        sweep_duration_range_s=(0.2, 0.2),
-        sweep_arc_range_rad=(0.2, 0.2),
+        reach_duration_range_s=(0.2, 0.2),
+        hold_duration_range_s=(0.2, 0.2),
+        drag_duration_range_s=(0.2, 0.2),
+        drag_distance_range_mm=(0.0, 0.0),
+        brush_duration_range_s=(0.2, 0.2),
+        brush_arc_range_rad=(0.2, 0.2),
         rotate_duration_range_s=(0.2, 0.2),
         rotate_angle_range_rad=(0.2, 0.2),
         probe_duration_range_s=(0.2, 0.2),
@@ -78,12 +78,12 @@ def _sequencer_config(seed: int = 42) -> MotionGeneratorConfig:
         target_orientation_jitter_rad=0.1,
         jaw_value_range=(0.0, 1.0),
         jaw_change_probability=0.0,
-        weight_approach=1.0,
-        weight_dwell=1.0,
-        weight_retract=1.0,
-        weight_sweep=1.0,
-        weight_rotate=1.0,
-        weight_probe=1.0,
+        weight_reach=1.0,
+        weight_hold=1.0,
+        weight_drag=1.0,
+        weight_brush=1.0,
+        weight_grip=1.0,
+        weight_contact_reach=1.0,
     )
 
 
@@ -103,9 +103,9 @@ def _scene() -> SceneConfig:
 def _inner_envelope() -> SphereEnvelope:
     return SphereEnvelope(
         center_scene=Vec3(x=0.0, y=0.0, z=0.0),
-        radius_m=1.0,
-        outer_margin_m=1.0,
-        inner_margin_m=0.2,
+        radius_mm=1.0,
+        outer_margin_mm=1.0,
+        inner_margin_mm=0.2,
     )
 
 
@@ -120,7 +120,7 @@ def test_build_reach_samples_within_inner_envelope() -> None:
 
     target = primitive.target_pose_scene.position
     signed_distance = envelope.signed_distance_to_envelope(target)
-    assert float(signed_distance) >= float(envelope.inner_margin_m)
+    assert float(signed_distance) >= float(envelope.inner_margin_mm)
 
 
 def test_named_sub_rngs_are_seed_deterministic() -> None:

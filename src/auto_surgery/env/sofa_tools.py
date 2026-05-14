@@ -448,7 +448,6 @@ def _discover_forceps_handles(scene: Any) -> _DiscoveredForcepsHandles:
 
 def build_forceps_velocity_applier(
     *,
-    force_scale: float = 0.01,
     forceps_dof: Any | None = None,
     jaw_open_angle_rad: float = 0.30,
     jaw_closed_angle_rad: float = 0.0,
@@ -464,6 +463,14 @@ def build_forceps_velocity_applier(
     The shaft's OglModel is animated by SOFA via ``RigidMapping`` from the
     Rigid3d shaft DOF, so we only need to write velocities on the DOF here;
     the per-clasper visual transforms still need explicit kinematic writes.
+
+    Contract (DejaVu brain / mm scene): ``RobotCommand.cartesian_twist`` with
+    ``frame=ControlFrame.CAMERA`` uses **linear mm/s** in camera axes and
+    **angular rad/s**. Values are mapped to scene frame via the rigid adjoint
+    (including ``ω × r`` when the camera origin is offset from the shaft),
+    shifted from tool tip to shaft origin, then written to the Rigid3d
+    ``velocity`` field (linear mm/s, angular rad/s) for ``EulerImplicit`` to
+    integrate using the simulation ``dt``.
     """
 
     if jaw_ref is None:
@@ -618,15 +625,8 @@ def build_forceps_velocity_applier(
 
         scene_pose = _resolve_camera_pose(scene)
         current_shaping = _resolve_motion_shaping(action)
-        scaled_camera_twist = Twist(
-            linear=Vec3(
-                x=float(action.cartesian_twist.linear.x) * force_scale,
-                y=float(action.cartesian_twist.linear.y) * force_scale,
-                z=float(action.cartesian_twist.linear.z) * force_scale,
-            ),
-            angular=action.cartesian_twist.angular,
-        )
-        scene_twist = _twist_camera_to_scene(scaled_camera_twist, scene_pose)
+        camera_twist = action.cartesian_twist
+        scene_twist = _twist_camera_to_scene(camera_twist, scene_pose)
         shaft_twist = _shaft_origin_twist_from_tip_twist(
             scene_twist,
             _read_pose_from_handle(state["dof"]),
@@ -654,10 +654,10 @@ def build_forceps_velocity_applier(
             dt_s = max(0.0, (int(action.timestamp_ns) - int(previous_timestamp_ns)) / 1e9)
 
         record = _feedback_record()
-        max_linear_m_s = float(current_shaping.max_linear_m_s) if current_shaping else None
+        max_linear_mm_s = float(current_shaping.max_linear_mm_s) if current_shaping else None
         max_angular_rad_s = float(current_shaping.max_angular_rad_s) if current_shaping else None
-        max_linear_accel_m_s2 = (
-            float(current_shaping.max_linear_accel_m_s2) if current_shaping else None
+        max_linear_accel_mm_s2 = (
+            float(current_shaping.max_linear_accel_mm_s2) if current_shaping else None
         )
         max_angular_accel_rad_s2 = (
             float(current_shaping.max_angular_accel_rad_s2) if current_shaping else None
@@ -666,8 +666,8 @@ def build_forceps_velocity_applier(
         clamped_linear = _limit_magnitude_channel(
             (shaft_twist[0], shaft_twist[1], shaft_twist[2]),
             (last_applied_twist[0], last_applied_twist[1], last_applied_twist[2]),
-            max_speed=max_linear_m_s,
-            max_accel=max_linear_accel_m_s2,
+            max_speed=max_linear_mm_s,
+            max_accel=max_linear_accel_mm_s2,
             dt_s=dt_s,
             key_scaled="scaled_linear",
             record=record,

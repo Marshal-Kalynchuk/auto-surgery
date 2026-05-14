@@ -25,9 +25,6 @@ from auto_surgery.schemas.sensors import (
 
 
 class _LinearWorkspaceEnvelope(SceneGeometryEnvelope):
-    outer_margin_m: float = 1.0
-    inner_margin_m: float = 0.0
-
     def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
         return 1.0 - float(p_scene.x)
 
@@ -143,7 +140,13 @@ def _build_environment(initial_tool_x: float) -> tuple[SofaEnvironment, _Predict
 
     scene = SceneConfig(
         tissue_scene_path="/tmp/orchestration_predictive_scene.xml",
-        tool=ToolSpec(workspace_envelope=_LinearWorkspaceEnvelope()),
+        tool=ToolSpec(
+            workspace_envelope=_LinearWorkspaceEnvelope(
+                outer_margin_mm=1.0,
+                inner_margin_mm=0.0,
+                no_go_regions=[],
+            )
+        ),
     )
 
     def backend_factory(_scene_path: str, _extra: dict[str, object] | None) -> _PredictiveBackend:
@@ -188,7 +191,7 @@ def test_orchestration_predictive_scaling_updates_command_and_safety() -> None:
     assert backend.last_command.safety is not None
     assert backend.last_command.safety.clamped_linear is True
     assert backend.last_command.safety.scaled_by == pytest.approx(2.0 / 3.0)
-    assert backend.last_command.safety.signed_distance_to_envelope_m == pytest.approx(0.5)
+    assert backend.last_command.safety.signed_distance_to_envelope_mm == pytest.approx(0.5)
 
 
 def test_orchestration_predictive_hard_block_rejects_out_of_bounds_motion() -> None:
@@ -202,7 +205,7 @@ def test_orchestration_predictive_hard_block_rejects_out_of_bounds_motion() -> N
     assert reason == "tip_outside_workspace_envelope"
     assert command.safety is not None
     assert command.safety.clamped_linear is False
-    assert command.safety.signed_distance_to_envelope_m < 0.0
+    assert command.safety.signed_distance_to_envelope_mm < 0.0
 
     result = env.step(command)
     assert result.sensors.safety.command_blocked is True

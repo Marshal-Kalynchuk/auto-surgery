@@ -55,8 +55,8 @@ def test_new_primitives_are_constructible():
     hold = Hold(duration_s=0.5, jaw_target_start=0.0, jaw_target_end=0.0)
     contact_reach = ContactReach(
         direction_hint_scene=Vec3(x=0.0, y=0.0, z=1.0),
-        max_search_m=0.1,
-        peak_speed_m_per_s=0.05,
+        max_search_mm=100.0,
+        peak_speed_mm_per_s=50.0,
         duration_s=2.1,
         jaw_target_start=0.0,
         jaw_target_end=0.0,

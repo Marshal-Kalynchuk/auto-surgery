@@ -6,7 +6,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from auto_surgery.motion.primitives import Hold, Reach
+from auto_surgery.motion.primitives import ContactReach, Hold, Reach
 from auto_surgery.motion.sequencer import MotionGeneratorConfig, PrimitiveKind, Sequencer, _EPS, _sample_point_in_volume
 from auto_surgery.schemas.commands import Pose, Quaternion, Vec3
 from auto_surgery.schemas.commands import Twist
@@ -56,12 +56,12 @@ def _sequencer_config(seed: int = 0, **overrides: Any) -> MotionGeneratorConfig:
         seed=seed,
         primitive_count_min=6,
         primitive_count_max=6,
-        approach_duration_range_s=(0.4, 0.4),
-        dwell_duration_range_s=(0.25, 0.25),
-        retract_duration_range_s=(0.2, 0.2),
-        retract_distance_range_m=(0.004, 0.004),
-        sweep_duration_range_s=(0.3, 0.3),
-        sweep_arc_range_rad=(0.2, 0.2),
+        reach_duration_range_s=(0.4, 0.4),
+        hold_duration_range_s=(0.25, 0.25),
+        drag_duration_range_s=(0.2, 0.2),
+        drag_distance_range_mm=(4.0, 4.0),
+        brush_duration_range_s=(0.3, 0.3),
+        brush_arc_range_rad=(0.2, 0.2),
         rotate_duration_range_s=(0.3, 0.3),
         rotate_angle_range_rad=(0.2, 0.2),
         probe_duration_range_s=(0.2, 0.2),
@@ -69,12 +69,12 @@ def _sequencer_config(seed: int = 0, **overrides: Any) -> MotionGeneratorConfig:
         target_orientation_jitter_rad=0.0,
         jaw_value_range=(0.0, 1.0),
         jaw_change_probability=0.0,
-        weight_approach=1.0,
-        weight_dwell=1.0,
-        weight_retract=1.0,
-        weight_sweep=1.0,
-        weight_rotate=1.0,
-        weight_probe=1.0,
+        weight_reach=1.0,
+        weight_hold=1.0,
+        weight_drag=1.0,
+        weight_brush=1.0,
+        weight_grip=1.0,
+        weight_contact_reach=1.0,
     )
     return MotionGeneratorConfig(**{**base.__dict__, **overrides})
 
@@ -155,23 +155,25 @@ def test_next_primitive_skips_first_rule_when_plan_empty() -> None:
         assert sample_kind.call_count == 0
 
 
-def test_probe_duration_guarantees_retract_and_safety_margin() -> None:
-    cfg = _sequencer_config(seed=4, weight_approach=0.0, weight_dwell=0.0, weight_retract=0.0, weight_sweep=0.0, weight_rotate=0.0, weight_probe=1.0)
+def test_contact_reach_duration_matches_reach_range() -> None:
+    cfg = _sequencer_config(
+        seed=4,
+        weight_reach=0.0,
+        weight_hold=0.0,
+        weight_drag=0.0,
+        weight_brush=0.0,
+        weight_grip=0.0,
+        weight_contact_reach=1.0,
+    )
 
     seq = Sequencer(cfg, _scene())
     seq.reset(_step())
 
-    # First primitive is deterministic approach-to-center.
     seq.next_primitive(_step(), 0.0)
-    probe = seq.next_primitive(_step(), 0.0)
-    assert probe is not None
-    assert probe.duration_s > 0.0
-
-    approach = cfg.probe_duration_range_s[0]
-    hold = cfg.probe_hold_range_s[0]
-    distance = cfg.retract_distance_range_m[0]
-    expected = approach + hold + (1.875 * distance / cfg.probe_retract_peak_speed_m_per_s) + cfg.probe_duration_safety_margin_s
-    assert probe.duration_s >= expected
+    contact = seq.next_primitive(_step(), 0.0)
+    assert contact is not None
+    assert isinstance(contact, ContactReach)
+    assert contact.duration_s == pytest.approx(cfg.reach_duration_range_s[0])
 
 
 def test_sweep_axis_bias_keeps_camera_z_within_scale() -> None:

@@ -29,7 +29,7 @@ def test_sphere_scene_geometry_methods() -> None:
     hit = geometry.ray_cast(
         origin=Vec3(x=-5.0, y=0.0, z=0.0),
         direction=Vec3(x=1.0, y=0.0, z=0.0),
-        max_distance_m=10.0,
+        max_distance_mm=10.0,
     )
     assert isinstance(hit, RayHit)
     assert hit.distance == pytest.approx(3.0, abs=1.0e-12)
@@ -38,7 +38,7 @@ def test_sphere_scene_geometry_methods() -> None:
     assert geometry.ray_cast(
         origin=Vec3(x=-5.0, y=0.0, z=0.0),
         direction=Vec3(x=1.0, y=0.0, z=0.0),
-        max_distance_m=1.0,
+        max_distance_mm=1.0,
     ) is None
 
     bounds_min, bounds_max = geometry.bounds()

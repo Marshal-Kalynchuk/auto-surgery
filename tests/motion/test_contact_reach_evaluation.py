@@ -85,17 +85,17 @@ def _generator(*, scene_geometry: _FakeSceneGeometry) -> SurgicalMotionGenerator
 def test_evaluate_contact_reach_drives_toward_surface() -> None:
     geometry = _FakeSceneGeometry(
         _FakeSurfacePoint(
-            position=Vec3(x=0.2, y=0.0, z=0.0),
+            position=Vec3(x=50.0, y=0.0, z=0.0),
             normal=Vec3(x=1.0, y=0.0, z=0.0),
-            signed_distance=0.2,
+            signed_distance=50.0,
         )
     )
     generator = _generator(scene_geometry=geometry)
     active = SimpleNamespace(
         primitive=ContactReach(
             direction_hint_scene=None,
-            max_search_m=0.2,
-            peak_speed_m_per_s=0.1,
+            max_search_mm=200.0,
+            peak_speed_mm_per_s=100.0,
             duration_s=1.0,
             jaw_target_start=None,
             jaw_target_end=None,
@@ -133,8 +133,8 @@ def test_evaluate_contact_reach_terminates_on_contact_or_threshold(in_contact: b
     active = SimpleNamespace(
         primitive=ContactReach(
             direction_hint_scene=None,
-            max_search_m=0.2,
-            peak_speed_m_per_s=0.1,
+            max_search_mm=200.0,
+            peak_speed_mm_per_s=100.0,
             duration_s=1.0,
             jaw_target_start=None,
             jaw_target_end=None,

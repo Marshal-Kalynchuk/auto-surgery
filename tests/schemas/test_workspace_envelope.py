@@ -12,15 +12,15 @@ from auto_surgery.schemas.scene import (
 
 def test_workspace_envelope_signed_distance_to_envelope_is_callable() -> None:
     scene_envelope = SceneGeometryEnvelope(
-        outer_margin_m=0.03,
-        inner_margin_m=0.01,
+        outer_margin_mm=0.03,
+        inner_margin_mm=0.01,
         no_go_regions=[],
     )
     sphere_envelope = SphereEnvelope(
         center_scene=Vec3(x=0.0, y=0.0, z=0.0),
-        radius_m=0.5,
-        outer_margin_m=0.03,
-        inner_margin_m=0.01,
+        radius_mm=0.5,
+        outer_margin_mm=0.03,
+        inner_margin_mm=0.01,
     )
 
     assert scene_envelope.signed_distance_to_envelope(Vec3(x=0.2, y=0.0, z=0.0)) == 0.0
@@ -32,15 +32,15 @@ def test_workspace_envelope_signed_distance_to_envelope_is_callable() -> None:
 
 def test_tool_spec_accepts_workspace_envelopes() -> None:
     scene_envelope: WorkspaceEnvelope = SceneGeometryEnvelope(
-        outer_margin_m=0.03,
-        inner_margin_m=0.01,
+        outer_margin_mm=0.03,
+        inner_margin_mm=0.01,
         no_go_regions=[],
     )
     sphere_envelope: WorkspaceEnvelope = SphereEnvelope(
         center_scene=Vec3(x=0.0, y=0.0, z=0.0),
-        radius_m=0.2,
-        outer_margin_m=0.03,
-        inner_margin_m=0.01,
+        radius_mm=0.2,
+        outer_margin_mm=0.03,
+        inner_margin_mm=0.01,
     )
 
     tool_with_scene = ToolSpec(workspace_envelope=scene_envelope)

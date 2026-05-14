@@ -69,12 +69,12 @@ def _step(*, sim_step_index: int, dt: float, tool_pose: Pose, tool_jaw: float = 
 def _motion_config() -> MotionGeneratorConfig:
     config = MotionGeneratorConfig(seed=0, motion_shaping_enabled=True)
     config.__dict__["motion_shaping"] = MotionShaping(
-        max_linear_m_s=0.2,
+        max_linear_mm_s=0.2,
         max_angular_rad_s=0.2,
-        max_linear_accel_m_s2=1.0,
+        max_linear_accel_mm_s2=1.0,
         max_angular_accel_rad_s2=1.0,
         bias_gain_max=1.0,
-        bias_ramp_distance_m=1.0,
+        bias_ramp_distance_mm=1.0,
         orientation_bias_gain=0.0,
         orientation_deadband_rad=0.0,
     )
@@ -82,7 +82,7 @@ def _motion_config() -> MotionGeneratorConfig:
 
 
 class _BiasEnvelope:
-    outer_margin_m = 1.0
+    outer_margin_mm = 1.0
 
     def __init__(self, signed_distance: float) -> None:
         self.signed_distance_value = float(signed_distance)
@@ -177,8 +177,8 @@ def test_next_command_applies_linear_bias_and_populates_safety() -> None:
         biased_linear=True,
         biased_angular=False,
         scaled_by=None,
-        signed_distance_to_envelope_m=0.5,
-        signed_distance_to_surface_m=None,
+        signed_distance_to_envelope_mm=0.5,
+        signed_distance_to_surface_mm=None,
     )
     assert cmd.cartesian_twist.linear.x == pytest.approx(-0.25)
     assert cmd.cartesian_twist.linear.y == pytest.approx(0.0)

@@ -50,8 +50,8 @@ def _normalise_no_nan(vector: np.ndarray) -> np.ndarray:
     return normalized
 
 
-def _grid_key(point: np.ndarray, resolution_m: float) -> tuple[int, int, int]:
-    scale = 1.0 / float(max(resolution_m, 1.0e-12))
+def _grid_key(point: np.ndarray, resolution_mm: float) -> tuple[int, int, int]:
+    scale = 1.0 / float(max(resolution_mm, 1.0e-12))
     return (
         int(round(point[0] * scale)),
         int(round(point[1] * scale)),
@@ -87,7 +87,7 @@ class SceneGeometry(Protocol):
         self,
         origin: Vec3,
         direction: Vec3,
-        max_distance_m: float,
+        max_distance_mm: float,
     ) -> RayHit | None: ...
 
     def bounds(self) -> AABB: ...
@@ -100,10 +100,10 @@ class MeshSceneGeometry:
         self,
         mesh_path: str,
         *,
-        sdf_grid_resolution_m: float | None = 0.001,
+        sdf_grid_resolution_mm: float | None = 1.0,
     ) -> None:
         self._mesh_path = str(Path(mesh_path).expanduser())
-        self._sdf_cache_resolution_m = sdf_grid_resolution_m
+        self._sdf_cache_resolution_mm = sdf_grid_resolution_mm
         self._sdf_cache: dict[tuple[int, int, int], float] = {}
 
         trimesh = _import_trimesh()
@@ -147,14 +147,14 @@ class MeshSceneGeometry:
 
     def signed_distance(self, p_scene: Vec3) -> float:
         point = _vec3_to_array(p_scene)
-        if self._sdf_cache_resolution_m is not None and self._sdf_cache_resolution_m > 0.0:
-            key = _grid_key(point, self._sdf_cache_resolution_m)
+        if self._sdf_cache_resolution_mm is not None and self._sdf_cache_resolution_mm > 0.0:
+            key = _grid_key(point, self._sdf_cache_resolution_mm)
             cached = self._sdf_cache.get(key)
             if cached is not None:
                 return cached
         signed_distance = self._compute_signed_distance(point)
-        if self._sdf_cache_resolution_m is not None and self._sdf_cache_resolution_m > 0.0:
-            self._sdf_cache[_grid_key(point, self._sdf_cache_resolution_m)] = signed_distance
+        if self._sdf_cache_resolution_mm is not None and self._sdf_cache_resolution_mm > 0.0:
+            self._sdf_cache[_grid_key(point, self._sdf_cache_resolution_mm)] = signed_distance
         return signed_distance
 
     def _compute_signed_distance(self, point: np.ndarray) -> float:
@@ -174,9 +174,9 @@ class MeshSceneGeometry:
         self,
         origin: Vec3,
         direction: Vec3,
-        max_distance_m: float,
+        max_distance_mm: float,
     ) -> RayHit | None:
-        if max_distance_m <= 0.0:
+        if max_distance_mm <= 0.0:
             return None
 
         origin_np = _vec3_to_array(origin)
@@ -207,7 +207,7 @@ class MeshSceneGeometry:
 
         hit_index = int(np.argmin(distances))
         hit_distance = float(distances[hit_index])
-        if hit_distance > max_distance_m:
+        if hit_distance > max_distance_mm:
             return None
 
         return RayHit(
@@ -253,9 +253,9 @@ class SphereSceneGeometry:
         self,
         origin: Vec3,
         direction: Vec3,
-        max_distance_m: float,
+        max_distance_mm: float,
     ) -> RayHit | None:
-        if max_distance_m <= 0.0:
+        if max_distance_mm <= 0.0:
             return None
 
         origin_np = _vec3_to_array(origin)
@@ -286,7 +286,7 @@ class SphereSceneGeometry:
             return None
 
         hit_distance = min(candidates)
-        if hit_distance > max_distance_m:
+        if hit_distance > max_distance_mm:
             return None
 
         return RayHit(

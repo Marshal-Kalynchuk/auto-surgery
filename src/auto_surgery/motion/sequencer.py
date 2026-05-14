@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from auto_surgery.env.scene_geometry import SceneGeometry, build_scene_geometry
-from auto_surgery.motion.profile import min_jerk_retract_duration
 from auto_surgery.motion.primitives import (
     Reach,
     Hold,
@@ -85,19 +84,8 @@ class Sequencer:
         object.__setattr__(self, "_rng_noise", np.random.default_rng(branches[2]))
         object.__setattr__(self, "_rng_blend", np.random.default_rng(branches[3]))
 
-    def _sample_weight(self, primary: str, fallback: str | None = None) -> float:
-        primary_name = f"weight_{primary}"
-        if hasattr(self.motion_config, primary_name):
-            return float(getattr(self.motion_config, primary_name))
-        if fallback is None:
-            return 0.0
-        fallback_name = f"weight_{fallback}"
-        if hasattr(self.motion_config, fallback_name):
-            return float(getattr(self.motion_config, fallback_name))
-        return 0.0
-
-    def _has_weight(self, name: str) -> bool:
-        return hasattr(self.motion_config, f"weight_{name}")
+    def _sample_weight(self, name: str) -> float:
+        return float(getattr(self.motion_config, f"weight_{name}", 0.0))
 
     def reset(self, initial_step: StepResult) -> None:
         """Reset the generator state for a new episode."""
@@ -132,10 +120,7 @@ class Sequencer:
                 case PrimitiveKind.GRIP:
                     primitive = self._build_grip(last_step)
                 case PrimitiveKind.CONTACT_REACH:
-                    if self._has_weight("contact_reach"):
-                        primitive = self._build_contact_reach(last_step)
-                    else:
-                        primitive = self._build_contact_reach(last_step)
+                    primitive = self._build_contact_reach(last_step)
                 case _:
                     primitive = self._build_hold()
 
@@ -152,12 +137,12 @@ class Sequencer:
             PrimitiveKind.CONTACT_REACH,
         )
         weights = (
-            self._sample_weight("reach", "approach"),
-            self._sample_weight("hold", "dwell"),
-            self._sample_weight("drag", "retract"),
-            self._sample_weight("brush", "sweep"),
-            self._sample_weight("grip", "rotate"),
-            self._sample_weight("contact_reach", "probe"),
+            self._sample_weight("reach"),
+            self._sample_weight("hold"),
+            self._sample_weight("drag"),
+            self._sample_weight("brush"),
+            self._sample_weight("grip"),
+            self._sample_weight("contact_reach"),
         )
         total = sum(max(0.0, weight) for weight in weights)
         if total <= 0.0:
@@ -180,7 +165,7 @@ class Sequencer:
         jaw_start, jaw_end = self._sample_jaw_targets()
         return Reach(
             target_pose_scene=target_pose,
-            duration_s=self._sample_range(self.motion_config.approach_duration_range_s),
+            duration_s=self._sample_range(self.motion_config.reach_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
             end_on_contact=True,
@@ -194,7 +179,7 @@ class Sequencer:
             _ = self._sample_target_pose(last_step, start_pose_scene)
         jaw_start, jaw_end = self._sample_jaw_targets()
         return Hold(
-            duration_s=self._sample_range(self.motion_config.dwell_duration_range_s),
+            duration_s=self._sample_range(self.motion_config.hold_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
         )
@@ -205,9 +190,9 @@ class Sequencer:
         jaw_start, jaw_end = self._sample_jaw_targets()
         return ContactReach(
             direction_hint_scene=None,
-            max_search_m=0.1,
-            peak_speed_m_per_s=0.05,
-            duration_s=self._sample_range(self.motion_config.approach_duration_range_s),
+            max_search_mm=10.0,
+            peak_speed_mm_per_s=15.0,
+            duration_s=self._sample_range(self.motion_config.reach_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
         )
@@ -222,20 +207,20 @@ class Sequencer:
         
         approach = ContactReach(
             direction_hint_scene=_vector_to_vec3(_normalize(surface_axis)),
-            max_search_m=0.1,
-            peak_speed_m_per_s=0.05,
-            duration_s=self._sample_range(self.motion_config.approach_duration_range_s),
+            max_search_mm=10.0,
+            peak_speed_mm_per_s=15.0,
+            duration_s=self._sample_range(self.motion_config.reach_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=None,
         )
         
         return Grip(
             approach=approach,
-            lift_distance_m=0.01,
+            lift_distance_mm=10.0,
             lift_duration_s=0.5,
             release_after_s=0.5,
             jaw_close_duration_s=0.3,
-            duration_s=self._sample_range(self.motion_config.approach_duration_range_s) + 1.8,
+            duration_s=self._sample_range(self.motion_config.reach_duration_range_s) + 1.8,
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
         )
@@ -250,9 +235,9 @@ class Sequencer:
         jaw_start, jaw_end = self._sample_jaw_targets()
         return Drag(
             direction_hint_scene=None,
-            distance_m=self._sample_range(self.motion_config.retract_distance_range_m),
+            distance_mm=self._sample_range(self.motion_config.drag_distance_range_mm),
             normal_force_target=0.1,
-            duration_s=self._sample_range(self.motion_config.retract_duration_range_s),
+            duration_s=self._sample_range(self.motion_config.drag_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
         )
@@ -265,9 +250,9 @@ class Sequencer:
         _, surface_axis = self._sample_target_position_and_surface(last_step, start_pose_scene)
         jaw_start, jaw_end = self._sample_jaw_targets()
         return Brush(
-            amplitude_m=0.005,
+            amplitude_mm=5.0,
             frequency_hz=2.0,
-            duration_s=self._sample_range(self.motion_config.sweep_duration_range_s),
+            duration_s=self._sample_range(self.motion_config.brush_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
         )
@@ -292,7 +277,7 @@ class Sequencer:
                     rng=self._rng,
                 ),
             ),
-            duration_s=0.5 * sum(self.motion_config.approach_duration_range_s),
+            duration_s=0.5 * sum(self.motion_config.reach_duration_range_s),
             jaw_target_start=jaw_start,
             jaw_target_end=jaw_end,
             end_on_contact=True,
@@ -396,7 +381,7 @@ class Sequencer:
         fallback = _safe_vector(fallback_position)
         if self._workspace_envelope is None:
             return fallback
-        inner_margin = float(getattr(self._workspace_envelope, "inner_margin_m", 0.0))
+        inner_margin = float(getattr(self._workspace_envelope, "inner_margin_mm", 0.0))
         if inner_margin <= 0.0:
             return fallback
         try:
@@ -408,7 +393,7 @@ class Sequencer:
         if isinstance(self._workspace_envelope, SphereEnvelope):
             center = _safe_vector(_vec_to_array(self._workspace_envelope.center_scene))
             direction = fallback - center
-            radius = float(self._workspace_envelope.radius_m)
+            radius = float(self._workspace_envelope.radius_mm)
             if radius > 0.0:
                 return center + _normalize(direction) * (radius + inner_margin + 1.0e-6)
 
@@ -434,7 +419,7 @@ class Sequencer:
         envelope = self._workspace_envelope
         if envelope is None:
             return True
-        inner_margin = float(getattr(envelope, "inner_margin_m", 0.0))
+        inner_margin = float(getattr(envelope, "inner_margin_mm", 0.0))
         if inner_margin <= 0.0:
             return True
         distance = float(envelope.signed_distance_to_envelope(_vector_to_vec3(point)))

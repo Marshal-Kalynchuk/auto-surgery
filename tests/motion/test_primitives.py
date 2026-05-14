@@ -77,8 +77,8 @@ def _step(
         lambda: Hold(duration_s=1.0, jaw_target_start=0.0, jaw_target_end=0.0),
         lambda: ContactReach(
             direction_hint_scene=None,
-            max_search_m=0.1,
-            peak_speed_m_per_s=0.05,
+            max_search_mm=100.0,
+            peak_speed_mm_per_s=50.0,
             duration_s=1.0,
             jaw_target_start=None,
             jaw_target_end=None,
@@ -86,8 +86,8 @@ def _step(
         lambda: Grip(
             approach=ContactReach(
                 direction_hint_scene=Vec3(x=0.0, y=0.0, z=1.0),
-                max_search_m=0.1,
-                peak_speed_m_per_s=0.05,
+                max_search_mm=100.0,
+                peak_speed_mm_per_s=50.0,
                 jaw_target_start=0.0,
                 jaw_target_end=1.0,
                 duration_s=0.2,
@@ -96,14 +96,14 @@ def _step(
         ),
         lambda: Drag(
             direction_hint_scene=None,
-            distance_m=0.05,
+            distance_mm=50.0,
             normal_force_target=0.1,
             duration_s=1.0,
             jaw_target_start=0.0,
             jaw_target_end=0.0,
         ),
         lambda: Brush(
-            amplitude_m=0.005,
+            amplitude_mm=5.0,
             frequency_hz=2.0,
             duration_s=1.0,
             jaw_target_start=0.0,
@@ -205,8 +205,8 @@ def test_hold_outputs_zero_twist() -> None:
 def test_reach_like_contact_primitive_finishes_on_contact() -> None:
     primitive = ContactReach(
         direction_hint_scene=Vec3(x=1.0, y=0.0, z=0.0),
-        max_search_m=0.1,
-        peak_speed_m_per_s=0.05,
+        max_search_mm=100.0,
+        peak_speed_mm_per_s=50.0,
         jaw_target_start=None,
         jaw_target_end=None,
         duration_s=1.0,
@@ -231,13 +231,13 @@ def test_grip_phases_eventually_finish() -> None:
     primitive = Grip(
         approach=ContactReach(
             direction_hint_scene=Vec3(x=1.0, y=0.0, z=0.0),
-            max_search_m=0.1,
-            peak_speed_m_per_s=0.05,
+            max_search_mm=100.0,
+            peak_speed_mm_per_s=50.0,
             jaw_target_start=0.0,
             jaw_target_end=0.0,
             duration_s=0.4,
         ),
-        lift_distance_m=0.01,
+        lift_distance_mm=10.0,
         lift_duration_s=0.2,
         release_after_s=0.2,
         jaw_close_duration_s=0.2,
@@ -287,14 +287,14 @@ def test_grip_phases_eventually_finish() -> None:
     [
         Drag(
             direction_hint_scene=Vec3(x=1.0, y=0.0, z=0.0),
-            distance_m=0.05,
+            distance_mm=50.0,
             normal_force_target=0.1,
             duration_s=1.0,
             jaw_target_start=0.0,
             jaw_target_end=0.0,
         ),
         Brush(
-            amplitude_m=0.005,
+            amplitude_mm=5.0,
             frequency_hz=2.0,
             duration_s=1.0,
             jaw_target_start=0.0,

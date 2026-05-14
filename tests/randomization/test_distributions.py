@@ -10,9 +10,10 @@ from auto_surgery.randomization.distributions import Choice, LogRange, Range, Ve
 
 def test_range_samples_within_bounds_and_are_reproducible() -> None:
     dist = Range(low=-2.25, high=3.75)
-    rng = np.random.default_rng(123)
-    first = [dist.sample(rng) for _ in range(256)]
-    second = [dist.sample(np.random.default_rng(123)) for _ in range(256)]
+    rng_a = np.random.default_rng(123)
+    first = [dist.sample(rng_a) for _ in range(256)]
+    rng_b = np.random.default_rng(123)
+    second = [dist.sample(rng_b) for _ in range(256)]
     assert first == second
     assert all(dist.low <= sample <= dist.high for sample in first)
 

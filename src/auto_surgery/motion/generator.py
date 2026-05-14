@@ -15,8 +15,8 @@ from auto_surgery.motion.primitives import (
     Drag,
     Brush,
     Primitive,
-    _CONTACT_TOLERANCE_M,
-    _SMALL_STANDOFF_M,
+    _CONTACT_TOLERANCE_MM,
+    _SMALL_STANDOFF_MM,
     _camera_basis,
     _evaluate as _evaluate_primitive,
     _jaw_target,
@@ -27,7 +27,6 @@ from auto_surgery.motion.primitives import (
 )
 from auto_surgery.motion.profile import min_jerk_velocity_scalar
 from auto_surgery.motion.sequencer import _Sequencer
-from auto_surgery.schemas.commands import Pose, Quaternion, Twist, Vec3, RobotCommand
 from auto_surgery.schemas.commands import (
     ControlFrame,
     ControlMode,
@@ -247,13 +246,13 @@ def _apply_linear_bias(
     point: Vec3,
     envelope: object,
     bias_gain_max: float,
-    bias_ramp_distance_m: float,
-    outer_margin_m: float,
+    bias_ramp_distance_mm: float,
+    outer_margin_mm: float,
 ) -> tuple[list[float], bool]:
-    if bias_gain_max <= 0.0 or outer_margin_m <= 0.0 or bias_ramp_distance_m <= 0.0:
+    if bias_gain_max <= 0.0 or outer_margin_mm <= 0.0 or bias_ramp_distance_mm <= 0.0:
         return raw_linear, False
 
-    beta = (float(outer_margin_m) - float(signed_distance)) / float(bias_ramp_distance_m)
+    beta = (float(outer_margin_mm) - float(signed_distance)) / float(bias_ramp_distance_mm)
     beta = max(0.0, min(float(beta), 1.0)) * float(bias_gain_max)
     if beta <= 0.0:
         return raw_linear, False
@@ -476,22 +475,22 @@ class SurgicalMotionGenerator:
         cp_position = _as_vec(getattr(cp, "position", tip_now))
         tip_position = _as_vec(tip_now)
         target_position = [
-            cp_position[0] + cp_normal[0] * _SMALL_STANDOFF_M,
-            cp_position[1] + cp_normal[1] * _SMALL_STANDOFF_M,
-            cp_position[2] + cp_normal[2] * _SMALL_STANDOFF_M,
+            cp_position[0] + cp_normal[0] * _SMALL_STANDOFF_MM,
+            cp_position[1] + cp_normal[1] * _SMALL_STANDOFF_MM,
+            cp_position[2] + cp_normal[2] * _SMALL_STANDOFF_MM,
         ]
-        remaining_search_m = max(
+        remaining_search_mm = max(
             0.0,
             _norm([target_position[0] - tip_position[0], target_position[1] - tip_position[1], target_position[2] - tip_position[2]]),
         )
-        peak_speed_m_per_s = float(getattr(primitive, "peak_speed_m_per_s", 0.0))
+        peak_speed_mm_per_s = float(getattr(primitive, "peak_speed_mm_per_s", 0.0))
         local_dt = max(0.0, float(getattr(last_step, "dt", 0.0)))
-        if peak_speed_m_per_s > 0.0:
-            local_dt = max(remaining_search_m / peak_speed_m_per_s, local_dt)
+        if peak_speed_mm_per_s > 0.0:
+            local_dt = max(remaining_search_mm / peak_speed_mm_per_s, local_dt)
 
         in_contact = bool(getattr(last_step.sensors.tool, "in_contact", False))
-        signed_distance = float(getattr(cp, "signed_distance", remaining_search_m))
-        if in_contact or signed_distance < _CONTACT_TOLERANCE_M:
+        signed_distance = float(getattr(cp, "signed_distance", remaining_search_mm))
+        if in_contact or signed_distance < _CONTACT_TOLERANCE_MM:
             return TwistSceneTip(
                 Twist(
                     linear=Vec3(x=0.0, y=0.0, z=0.0),
@@ -575,20 +574,20 @@ class SurgicalMotionGenerator:
             final_linear = raw_linear
         else:
             bias_gain_max = float(getattr(motion_shaping, "bias_gain_max", 0.0)) if motion_shaping is not None else 0.0
-            bias_ramp_distance_m = (
-                float(getattr(motion_shaping, "bias_ramp_distance_m", 0.0))
+            bias_ramp_distance_mm = (
+                float(getattr(motion_shaping, "bias_ramp_distance_mm", 0.0))
                 if motion_shaping is not None
                 else 0.0
             )
-            outer_margin_m = float(getattr(envelope, "outer_margin_m", 0.0))
+            outer_margin_mm = float(getattr(envelope, "outer_margin_mm", 0.0))
             final_linear, bias_linear = _apply_linear_bias(
                 raw_linear=raw_linear,
                 signed_distance=float(signed_distance),
                 point=tip_now_scene,
                 envelope=envelope,
                 bias_gain_max=bias_gain_max,
-                bias_ramp_distance_m=bias_ramp_distance_m,
-                outer_margin_m=outer_margin_m,
+                bias_ramp_distance_mm=bias_ramp_distance_mm,
+                outer_margin_mm=outer_margin_mm,
             )
 
         final_angular, bias_angular = (
@@ -630,8 +629,8 @@ class SurgicalMotionGenerator:
                 biased_linear=bool(locals().get("bias_linear", False)),
                 biased_angular=bias_angular,
                 scaled_by=None,
-                signed_distance_to_envelope_m=signed_distance,
-                signed_distance_to_surface_m=None,
+                signed_distance_to_envelope_mm=signed_distance,
+                signed_distance_to_surface_mm=None,
             ),
         )
 

@@ -10,7 +10,7 @@ from auto_surgery.schemas.motion import MotionShaping
 
 
 class Vec3(BaseModel):
-    """Right-handed 3D vector (meters / meters-per-second)."""
+    """Right-handed 3D vector components in scene millimetres (positions) or mm/s (linear twist parts)."""
 
     model_config = {"extra": "forbid"}
 
@@ -52,7 +52,7 @@ class Pose(BaseModel):
 
 
 class Twist(BaseModel):
-    """Instantaneous velocity: linear (m/s) + angular (rad/s axis-rate)."""
+    """Instantaneous velocity: linear (mm/s in scene or camera axes per ``RobotCommand.frame``) + angular (rad/s)."""
 
     model_config = {"extra": "forbid"}
 
@@ -92,8 +92,8 @@ class SafetyMetadata(BaseModel):
     biased_linear: bool
     biased_angular: bool
     scaled_by: float | None = None
-    signed_distance_to_envelope_m: float | None = None
-    signed_distance_to_surface_m: float | None = None
+    signed_distance_to_envelope_mm: float | None = None
+    signed_distance_to_surface_mm: float | None = None
 
 
 class RobotCommand(BaseModel):

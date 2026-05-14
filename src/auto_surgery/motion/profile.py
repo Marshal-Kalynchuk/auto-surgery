@@ -41,13 +41,13 @@ def min_jerk_velocity_scalar(tau: float, duration_s: float) -> float:
     )
 
 
-def min_jerk_retract_duration(*, distance_m: float, peak_retract_speed_m_per_s: float) -> float:
-    """Return the minimum jerk duration needed to retract ``distance_m``.
+def min_jerk_retract_duration(*, distance_mm: float, peak_retract_speed_mm_per_s: float) -> float:
+    """Return the minimum jerk duration needed to retract ``distance_mm``.
 
     Returns 0.0 when the duration is not physically meaningful.
     """
-    distance = abs(float(distance_m))
-    speed = abs(float(peak_retract_speed_m_per_s))
+    distance = abs(float(distance_mm))
+    speed = abs(float(peak_retract_speed_mm_per_s))
     if distance <= 0.0 or speed <= 0.0 or not math.isfinite(distance) or not math.isfinite(speed):
         return 0.0
     return _MIN_RETRACT_PEAK_FACTOR * distance / speed

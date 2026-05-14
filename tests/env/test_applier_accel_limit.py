@@ -37,19 +37,18 @@ class _ForcepsDof:
 
 def test_forceps_velocity_applier_limits_linear_and_angular_accel() -> None:
     shaping = MotionShaping(
-        max_linear_m_s=2.0,
+        max_linear_mm_s=2.0,
         max_angular_rad_s=2.0,
-        max_linear_accel_m_s2=0.5,
+        max_linear_accel_mm_s2=0.5,
         max_angular_accel_rad_s2=0.2,
         bias_gain_max=0.0,
-        bias_ramp_distance_m=1.0,
+        bias_ramp_distance_mm=1.0,
         orientation_bias_gain=0.0,
         orientation_deadband_rad=0.0,
     )
     dof = _ForcepsDof((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0))
     applier = build_forceps_velocity_applier(
         forceps_dof=dof,
-        force_scale=1.0,
         motion_shaping=shaping,
     )
     dof_key = str(id(dof))

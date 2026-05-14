@@ -208,8 +208,8 @@ class SceneGeometryEnvelope(WorkspaceEnvelope):
 
     model_config = {"extra": "forbid"}
 
-    outer_margin_m: float = Field(gt=0.0)
-    inner_margin_m: float = Field(ge=0.0)
+    outer_margin_mm: float = Field(gt=0.0)
+    inner_margin_mm: float = Field(ge=0.0)
     no_go_regions: list[dict[str, Any]] = Field(default_factory=list)
 
     def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
@@ -223,16 +223,16 @@ class SphereEnvelope(WorkspaceEnvelope):
     model_config = {"extra": "forbid"}
 
     center_scene: Vec3
-    radius_m: float = Field(gt=0.0)
-    outer_margin_m: float = Field(gt=0.0)
-    inner_margin_m: float = Field(ge=0.0)
+    radius_mm: float = Field(gt=0.0)
+    outer_margin_mm: float = Field(gt=0.0)
+    inner_margin_mm: float = Field(ge=0.0)
 
     def signed_distance_to_envelope(self, p_scene: Vec3) -> float:
         dx = p_scene.x - self.center_scene.x
         dy = p_scene.y - self.center_scene.y
         dz = p_scene.z - self.center_scene.z
         center_distance = math.sqrt(dx * dx + dy * dy + dz * dz)
-        return center_distance - self.radius_m
+        return center_distance - self.radius_mm
 
 
 WorkspaceEnvelope = SceneGeometryEnvelope | SphereEnvelope

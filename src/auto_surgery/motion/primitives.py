@@ -11,10 +11,10 @@ from auto_surgery.schemas.commands import Pose, Quaternion, Twist, Vec3
 from auto_surgery.schemas.results import StepResult
 
 
-_CONTACT_TOLERANCE_M = 1.0e-3
-_DEFAULT_CONTACT_SEARCH_M = 0.1
-_DEFAULT_CONTACT_SPEED_M_PER_S = 0.05
-_SMALL_STANDOFF_M = 1.0e-3
+_CONTACT_TOLERANCE_MM = 1.0
+_DEFAULT_CONTACT_SEARCH_MM = 12.0
+_DEFAULT_CONTACT_SPEED_MM_PER_S = 20.0
+_SMALL_STANDOFF_MM = 1.0
 _CONTACT_STEP_MIN_DT = 1.0e-3
 _EPS = 1.0e-12
 
@@ -55,14 +55,14 @@ class Hold(_CommonTimedParams):
 @dataclass(frozen=True)
 class ContactReach(_CommonTimedParams):
     direction_hint_scene: Vec3 | None = None
-    max_search_m: float = _DEFAULT_CONTACT_SEARCH_M
-    peak_speed_m_per_s: float = _DEFAULT_CONTACT_SPEED_M_PER_S
+    max_search_mm: float = _DEFAULT_CONTACT_SEARCH_MM
+    peak_speed_mm_per_s: float = _DEFAULT_CONTACT_SPEED_MM_PER_S
 
 
 @dataclass(frozen=True)
 class Grip:
     approach: ContactReach
-    lift_distance_m: float = 0.01
+    lift_distance_mm: float = 10.0
     lift_duration_s: float = 0.5
     release_after_s: float = 0.5
     jaw_close_duration_s: float = 0.3
@@ -74,13 +74,13 @@ class Grip:
 @dataclass(frozen=True)
 class Drag(_CommonTimedParams):
     direction_hint_scene: Vec3 | None = None
-    distance_m: float = 0.05
+    distance_mm: float = 8.0
     normal_force_target: float = 0.1
 
 
 @dataclass(frozen=True)
 class Brush(_CommonTimedParams):
-    amplitude_m: float = 0.005
+    amplitude_mm: float = 4.0
     frequency_hz: float = 2.0
 
 
@@ -245,8 +245,8 @@ def _evaluate_contact_reach(
     if np.linalg.norm(search_dir) <= _EPS:
         search_dir = np.array([0.0, 0.0, 1.0], dtype=float)
     search_dir = _axis_unit(search_dir)
-    target_point = _build_search_pose(tip_scene, search_dir, primitive.max_search_m)
-    target_pos = _vec_to_array(target_point.position) - search_dir * _SMALL_STANDOFF_M
+    target_point = _build_search_pose(tip_scene, search_dir, primitive.max_search_mm)
+    target_pos = _vec_to_array(target_point.position) - search_dir * _SMALL_STANDOFF_MM
 
     reached = bool(getattr(last_step.sensors.tool, "in_contact", False))
     touch_distance = _contact_distance_hint(last_step)
@@ -255,7 +255,7 @@ def _evaluate_contact_reach(
 
     remaining = max(duration_s - elapsed_s, 0.0)
     local_dt = max(_CONTACT_STEP_MIN_DT, min(float(getattr(last_step, "dt", _CONTACT_STEP_MIN_DT)), max(remaining, _CONTACT_STEP_MIN_DT)))
-    is_finished = reached or remaining <= _CONTACT_STEP_MIN_DT or touch_distance < _CONTACT_TOLERANCE_M
+    is_finished = reached or remaining <= _CONTACT_STEP_MIN_DT or touch_distance < _CONTACT_TOLERANCE_MM
 
     return PrimitiveOutput(
         twist_camera=_evaluate_reach(
@@ -338,7 +338,7 @@ def _evaluate_grip(
 
     if elapsed_s < p4:
         lift_t = _time_to_fraction(elapsed_s - p3, max(phase3, _CONTACT_STEP_MIN_DT))
-        target_pos = _vec_to_array(tip_scene.position) + normal * primitive.lift_distance_m * lift_t
+        target_pos = _vec_to_array(tip_scene.position) + normal * primitive.lift_distance_mm * lift_t
         target_pose = Pose(position=_vector_to_vec3(target_pos), rotation=tip_scene.rotation)
         return PrimitiveOutput(
             twist_camera=_evaluate_reach(
@@ -369,7 +369,7 @@ def _evaluate_grip(
         )
 
     remaining = max(duration_s - elapsed_s, 0.0)
-    target_pose = Pose(position=_vector_to_vec3(_vec_to_array(tip_scene.position) + normal * _SMALL_STANDOFF_M), rotation=tip_scene.rotation)
+    target_pose = Pose(position=_vector_to_vec3(_vec_to_array(tip_scene.position) + normal * _SMALL_STANDOFF_MM), rotation=tip_scene.rotation)
     return PrimitiveOutput(
         twist_camera=_evaluate_reach(
             active=active,
@@ -415,7 +415,7 @@ def _evaluate_drag(
     tangent = _axis_unit(tangent)
 
     local_dt = max(_CONTACT_STEP_MIN_DT, float(getattr(last_step, "dt", _CONTACT_STEP_MIN_DT)))
-    speed = primitive.distance_m / max(duration_s, local_dt)
+    speed = primitive.distance_mm / max(duration_s, local_dt)
     target_pos = _vec_to_array(tip_scene.position) + tangent * speed * local_dt
     wrench = getattr(last_step.sensors.tool, "wrench", None)
     if wrench is not None:
@@ -462,7 +462,7 @@ def _evaluate_brush(
     tip_scene = last_step.sensors.tool.pose
     direction = _axis_unit(_preferred_direction(None, tip_scene))
     omega = 2.0 * math.pi * primitive.frequency_hz
-    speed = abs(omega * primitive.amplitude_m * math.cos(omega * elapsed_s))
+    speed = abs(omega * primitive.amplitude_mm * math.cos(omega * elapsed_s))
     local_dt = max(_CONTACT_STEP_MIN_DT, float(getattr(last_step, "dt", _CONTACT_STEP_MIN_DT)))
     target_pos = _vec_to_array(tip_scene.position) + direction * speed * local_dt
     target_pose = Pose(position=_vector_to_vec3(target_pos), rotation=tip_scene.rotation)
@@ -530,8 +530,8 @@ def _camera_basis(last_step: StepResult) -> tuple[np.ndarray, np.ndarray]:
     return _quat_to_matrix(extrinsics.rotation), _vec_to_array(extrinsics.position)
 
 
-def _build_search_pose(tool_pose: Pose, direction: np.ndarray, max_search_m: float) -> Pose:
-    search_position = _vec_to_array(tool_pose.position) + _axis_unit(direction) * float(max_search_m)
+def _build_search_pose(tool_pose: Pose, direction: np.ndarray, max_search_mm: float) -> Pose:
+    search_position = _vec_to_array(tool_pose.position) + _axis_unit(direction) * float(max_search_mm)
     return Pose(position=_vector_to_vec3(search_position), rotation=tool_pose.rotation)
 
 

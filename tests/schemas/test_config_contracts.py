@@ -29,7 +29,43 @@ def test_motion_yaml_loads_and_matches_expected_ranges() -> None:
     assert motion_cfg.seed == 0
     assert motion_cfg.primitive_count_min == 8
     assert motion_cfg.primitive_count_max == 20
-    assert motion_cfg.weight_approach == 1.0
+    assert motion_cfg.weight_reach == 1.0
+
+
+def test_motion_loads_legacy_motion_keys_only(tmp_path: Path) -> None:
+    legacy_payload = {
+        "seed": 7,
+        "weight_approach": 2.2,
+        "weight_dwell": 1.1,
+        "weight_retract": 0.8,
+        "weight_sweep": 0.4,
+        "weight_rotate": 0.3,
+        "weight_probe": 0.5,
+        "approach_duration_range_s": [0.4, 1.0],
+        "dwell_duration_range_s": [0.2, 0.5],
+        "retract_duration_range_s": [0.3, 0.7],
+        "sweep_duration_range_s": [0.6, 1.2],
+        "sweep_arc_range_rad": [0.2, 0.7],
+    }
+    legacy_payload_path = tmp_path / "legacy_motion.yaml"
+    legacy_payload_path.write_text(yaml.safe_dump(legacy_payload), encoding="utf-8")
+
+    motion_cfg = load_motion_config(legacy_payload_path)
+    assert motion_cfg.weight_reach == 2.2
+    assert motion_cfg.weight_hold == 1.1
+    assert motion_cfg.weight_drag == 0.8
+    assert motion_cfg.weight_brush == 0.4
+    assert motion_cfg.weight_grip == 0.3
+    assert motion_cfg.weight_contact_reach == 0.5
+    assert motion_cfg.reach_duration_range_s == (0.4, 1.0)
+    assert motion_cfg.hold_duration_range_s == (0.2, 0.5)
+    assert motion_cfg.drag_duration_range_s == (0.3, 0.7)
+    assert motion_cfg.brush_duration_range_s == (0.6, 1.2)
+    assert motion_cfg.brush_arc_range_rad == (0.2, 0.7)
+
+    dumped = motion_cfg.model_dump()
+    assert "weight_approach" not in dumped
+    assert "approach_duration_range_s" not in dumped
 
 
 def test_empty_target_volumes_rejected(tmp_path: Path) -> None:
@@ -121,7 +157,7 @@ def test_scene_rejects_invalid_tone_augmentation(tmp_path: Path) -> None:
 
 def test_loads_motion_config_rejects_invalid_range_ordering(tmp_path: Path) -> None:
     motion_payload = yaml.safe_load(MOTION_CONFIG_PATH.read_text(encoding="utf-8"))
-    motion_payload["probe_duration_range_s"] = [1.4, 0.6]
+    motion_payload["reach_duration_range_s"] = [1.4, 0.6]
     bad_motion = tmp_path / "motion_inverted_range.yaml"
     bad_motion.write_text(yaml.safe_dump(motion_payload), encoding="utf-8")
 

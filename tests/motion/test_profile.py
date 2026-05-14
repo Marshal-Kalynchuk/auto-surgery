@@ -37,13 +37,15 @@ def test_min_jerk_velocity_scalar_scaling() -> None:
 
 
 def test_min_jerk_retract_duration_returns_zero_for_invalid_inputs() -> None:
-    assert min_jerk_retract_duration(distance_m=0.0, peak_retract_speed_m_per_s=0.0) == 0.0
-    assert min_jerk_retract_duration(distance_m=0.1, peak_retract_speed_m_per_s=0.05) == pytest.approx(3.75)
-    assert min_jerk_retract_duration(distance_m=0.1, peak_retract_speed_m_per_s=-0.05) == pytest.approx(3.75)
+    assert min_jerk_retract_duration(distance_mm=0.0, peak_retract_speed_mm_per_s=0.0) == 0.0
+    assert min_jerk_retract_duration(distance_mm=100.0, peak_retract_speed_mm_per_s=50.0) == pytest.approx(3.75)
+    assert min_jerk_retract_duration(distance_mm=100.0, peak_retract_speed_mm_per_s=-50.0) == pytest.approx(3.75)
 
 
 def test_min_jerk_retract_duration_formula() -> None:
-    distance = 0.01
-    speed = 0.02
-    expected = 1.875 * distance / speed
-    assert min_jerk_retract_duration(distance_m=distance, peak_retract_speed_m_per_s=speed) == pytest.approx(expected)
+    distance_mm = 10.0
+    speed_mm_per_s = 20.0
+    expected = 1.875 * distance_mm / speed_mm_per_s
+    assert min_jerk_retract_duration(
+        distance_mm=distance_mm, peak_retract_speed_mm_per_s=speed_mm_per_s
+    ) == pytest.approx(expected)
